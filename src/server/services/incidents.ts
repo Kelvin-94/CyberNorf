@@ -114,7 +114,8 @@ export async function getIncidentDetail(ctx: TenantContext, incidentId: string) 
       createdAt: true,
       actor: { select: { name: true } },
     },
-    orderBy: { createdAt: 'asc' },
+    // Sequence is the authoritative chain order; createdAt can tie.
+    orderBy: { sequence: 'asc' },
     take: 300,
   });
 
