@@ -1,0 +1,386 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Subscription tier. Tier eligibility is evaluated by the policy layer; it is
+/// never treated as authorization to act on a target.
+enum SubscriptionTier {
+  COMMUNITY
+  STUDENT
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+/// Organization-scoped role. Capability mapping lives in src/server/authz/roles.ts.
+enum OrgRole {
+  OWNER
+  ADMIN
+  ANALYST
+  VIEWER
+}
+
+enum MembershipStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum AssetType {
+  DOMAIN
+  IP_ADDRESS
+  CIDR
+  HOSTNAME
+  WEB_APPLICATION
+  CLOUD_ACCOUNT
+  OTHER
+}
+
+enum AssetCriticality {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AssetStatus {
+  ACTIVE
+  INACTIVE
+  RETIRED
+}
+
+/// Ownership verification state. v1 records an operator declaration only; no
+/// DNS or IAM ownership proof has been implemented yet.
+enum AssetVerificationStatus {
+  DECLARED
+  VERIFIED
+  REVOKED
+}
+
+enum FindingSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum FindingStatus {
+  OPEN
+  TRIAGED
+  IN_PROGRESS
+  RESOLVED
+  ACCEPTED_RISK
+  FALSE_POSITIVE
+}
+
+enum FindingSource {
+  MANUAL
+  IMPORT
+}
+
+enum IncidentSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum IncidentStatus {
+  OPEN
+  INVESTIGATING
+  CONTAINED
+  RESOLVED
+  CLOSED
+}
+
+enum AuditOutcome {
+  SUCCESS
+  DENIED
+  FAILURE
+}
+
+enum AuditActorType {
+  USER
+  SYSTEM
+}
+
+// ---------------------------------------------------------------------------
+// Identity (managed by Better Auth; schema generated with @better-auth/cli)
+// ---------------------------------------------------------------------------
+
+model User {
+  id                String         @id
+  name              String
+  email             String
+  emailVerified     Boolean        @default(false)
+  image             String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  twoFactorEnabled  Boolean?       @default(false)
+  sessions          Session[]
+  accounts          Account[]
+  twofactors        TwoFactor[]
+  memberships       Membership[]
+  createdAssets     Asset[]        @relation("AssetCreatedBy")
+  createdFindings   Finding[]      @relation("FindingCreatedBy")
+  assignedFindings  Finding[]      @relation("FindingAssignedTo")
+  createdIncidents  Incident[]     @relation("IncidentCreatedBy")
+  assignedIncidents Incident[]     @relation("IncidentAssignedTo")
+  incidentNotes     IncidentNote[]
+  auditEvents       AuditEvent[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model TwoFactor {
+  id                      String    @id
+  secret                  String
+  backupCodes             String
+  userId                  String
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verified                Boolean?  @default(true)
+  failedVerificationCount Int?      @default(0)
+  lockedUntil             DateTime?
+
+  @@index([secret])
+  @@index([userId])
+  @@map("twoFactor")
+}
+
+model RateLimit {
+  id          String @id
+  key         String
+  count       Int
+  lastRequest BigInt
+
+  @@unique([key])
+  @@map("rateLimit")
+}
+
+// ---------------------------------------------------------------------------
+// Tenant and domain model
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id          String           @id @default(cuid())
+  name        String
+  slug        String           @unique
+  description String?
+  tier        SubscriptionTier @default(PROFESSIONAL)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  memberships Membership[]
+  assets      Asset[]
+  findings    Finding[]
+  incidents   Incident[]
+  auditEvents AuditEvent[]
+
+  @@map("organizations")
+}
+
+model Membership {
+  id             String           @id @default(cuid())
+  userId         String
+  organizationId String
+  role           OrgRole
+  status         MembershipStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId, role])
+  @@map("memberships")
+}
+
+model Asset {
+  id                 String                  @id @default(cuid())
+  organizationId     String
+  name               String
+  type               AssetType
+  identifier         String
+  description        String?
+  criticality        AssetCriticality        @default(MEDIUM)
+  status             AssetStatus             @default(ACTIVE)
+  verificationStatus AssetVerificationStatus @default(DECLARED)
+  createdById        String
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  organization       Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy          User                    @relation("AssetCreatedBy", fields: [createdById], references: [id])
+  findings           Finding[]
+
+  @@unique([organizationId, identifier])
+  @@index([organizationId, status])
+  @@index([organizationId, type])
+  @@map("assets")
+}
+
+model Finding {
+  id             String          @id @default(cuid())
+  organizationId String
+  assetId        String?
+  incidentId     String?
+  title          String
+  description    String?
+  severity       FindingSeverity
+  status         FindingStatus   @default(OPEN)
+  source         FindingSource
+  fingerprint    String
+  cveId          String?
+  cvssScore      Decimal?        @db.Decimal(3, 1)
+  remediation    String?
+  createdById    String
+  assignedToId   String?
+  firstSeenAt    DateTime        @default(now())
+  lastSeenAt     DateTime        @default(now())
+  resolvedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  asset          Asset?          @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  incident       Incident?       @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  createdBy      User            @relation("FindingCreatedBy", fields: [createdById], references: [id])
+  assignedTo     User?           @relation("FindingAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, fingerprint])
+  @@index([organizationId, status])
+  @@index([organizationId, severity])
+  @@index([organizationId, assetId])
+  @@map("findings")
+}
+
+model Incident {
+  id             String           @id @default(cuid())
+  organizationId String
+  title          String
+  description    String?
+  severity       IncidentSeverity
+  status         IncidentStatus   @default(OPEN)
+  createdById    String
+  assignedToId   String?
+  detectedAt     DateTime         @default(now())
+  resolvedAt     DateTime?
+  closedAt       DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      User             @relation("IncidentCreatedBy", fields: [createdById], references: [id])
+  assignedTo     User?            @relation("IncidentAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  notes          IncidentNote[]
+  findings       Finding[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, severity])
+  @@map("incidents")
+}
+
+model IncidentNote {
+  id             String   @id @default(cuid())
+  organizationId String
+  incidentId     String
+  authorId       String
+  body           String
+  createdAt      DateTime @default(now())
+  incident       Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  author         User     @relation(fields: [authorId], references: [id])
+
+  @@index([incidentId, createdAt])
+  @@index([organizationId])
+  @@map("incident_notes")
+}
+
+/// Append-only audit trail. A database trigger rejects UPDATE and DELETE on
+/// this table; rows are hash-chained per organization for tamper evidence.
+model AuditEvent {
+  id             String         @id @default(cuid())
+  organizationId String
+  sequence       Int
+  actorType      AuditActorType
+  actorId        String?
+  action         String
+  outcome        AuditOutcome
+  targetType     String?
+  targetId       String?
+  summary        String?
+  metadata       Json?
+  ipAddress      String?
+  userAgent      String?
+  requestId      String?
+  prevHash       String?
+  hash           String
+  createdAt      DateTime       @default(now())
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor          User?          @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, sequence])
+  @@index([organizationId, createdAt])
+  @@index([organizationId, action])
+  @@index([organizationId, targetType, targetId])
+  @@map("audit_events")
+}
+
+/// Fixed-window counters for CyberNorf API rate limits (Better Auth keeps its
+/// own counters in the RateLimit table).
+model ApiRateLimit {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  count       Int      @default(0)
+  windowStart DateTime
+  updatedAt   DateTime @updatedAt
+
+  @@map("api_rate_limits")
+}
