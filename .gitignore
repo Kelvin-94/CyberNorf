@@ -1,0 +1,44 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+.local/
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build output
+dist/
+build/
+.next/
+out/
+coverage/
+src/generated/prisma/
+*.tsbuildinfo
+.vercel/
+.turbo/
+
+# Logs
+*.log
+logs/
+
+# Local databases and runtime data
+*.sqlite
+*.sqlite3
+*.db
+uploads/
+tmp/
+temp/
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

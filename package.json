@@ -1,0 +1,58 @@
+{
+  "name": "cybernorf",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "format": "prisma format && prettier --write 'src/**/*.{ts,tsx,css}' '*.json' '*.ts' '*.mjs' 'compose.yaml' '.github/**/*.yml' 'docs/DEVELOPMENT.md' 'docs/decisions/*.md'",
+    "format:check": "prisma format --check && prettier --check 'src/**/*.{ts,tsx,css}' '*.json' '*.ts' '*.mjs' 'compose.yaml' '.github/**/*.yml' 'docs/DEVELOPMENT.md' 'docs/decisions/*.md'",
+    "typecheck": "prisma generate && next typegen && tsc --noEmit",
+    "test": "tsx --env-file-if-exists=.env.test --test --test-concurrency=1 \"src/**/*.test.ts\" \"tests/**/*.test.ts\"",
+    "test:unit": "tsx --env-file-if-exists=.env.test --test --test-concurrency=1 \"src/**/*.test.ts\"",
+    "test:db:prepare": "tsx --env-file-if-exists=.env.test scripts/prepare-test-db.ts",
+    "db:validate": "prisma validate",
+    "db:generate": "prisma generate",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:status": "prisma migrate status"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "better-auth": "^1.7.15",
+    "dotenv": "^17.2.3",
+    "next": "16.4.2",
+    "pg": "^8.16.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "eslint": "^10.0.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "prettier": "^3.6.2",
+    "prisma": "^7.10.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.0"
+  },
+  "allowScripts": {
+    "prisma@7.10.1": true,
+    "@prisma/engines@7.10.1": true,
+    "unrs-resolver@1.12.2": true
+  }
+}

@@ -1,0 +1,19 @@
+services:
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: cybernorf
+      POSTGRES_USER: cybernorf
+      POSTGRES_PASSWORD: cybernorf
+    ports:
+      - '127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432'
+    volumes:
+      - cybernorf-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cybernorf -d cybernorf']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  cybernorf-postgres-data:
