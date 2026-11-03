@@ -1,0 +1,39 @@
+#!/bin/sh
+# Mirror the protected-branch rules locally so an accidental push to `main`
+# fails before it reaches the server.
+#
+# Set ALLOW_MAIN_PUSH=1 for a deliberate, one-off exception.
+
+set -u
+
+protected="${PROTECTED_BRANCH:-main}"
+zero="0000000000000000000000000000000000000000"
+status=0
+
+if [ "${ALLOW_MAIN_PUSH:-0}" = "1" ]; then
+  exit 0
+fi
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" != "refs/heads/$protected" ]; then
+    continue
+  fi
+
+  if [ "$local_sha" = "$zero" ]; then
+    printf 'pre-push: %s is protected; deleting it is not allowed.\n' "$protected" >&2
+    status=1
+    continue
+  fi
+
+  if [ "$remote_sha" != "$zero" ] && ! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
+    printf 'pre-push: %s is protected; force pushes are not allowed.\n' "$protected" >&2
+    status=1
+    continue
+  fi
+
+  printf 'pre-push: %s is protected; push a branch and open a pull request instead.\n' "$protected" >&2
+  printf 'pre-push: deliberate exception: ALLOW_MAIN_PUSH=1 git push origin %s\n' "$protected" >&2
+  status=1
+done
+
+exit $status
