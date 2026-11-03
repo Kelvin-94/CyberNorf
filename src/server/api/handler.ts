@@ -32,20 +32,23 @@ export interface TenantHandlerInput<P extends RouteParams> extends HandlerInput<
 export interface RateLimitOption {
   limit: number;
   windowSeconds: number;
-  /** Bucket identity. User-scoped buckets fall back to the client address. */
+  /** Bucket identity. User-scoped buckets also get the address floor below. */
   scope?: 'user' | 'ip';
 }
 
 export interface RouteOptions {
-  /** Defaults to true. Public routes must opt out explicitly. */
-  requiresAuth?: boolean;
   rateLimit?: RateLimitOption;
-  /** Safe HTTP methods skip the same-origin check. */
-  safeMethodsOnly?: boolean;
 }
 
 const DEFAULT_READ_LIMIT: RateLimitOption = { limit: 240, windowSeconds: 60, scope: 'ip' };
 const DEFAULT_WRITE_LIMIT: RateLimitOption = { limit: 60, windowSeconds: 60, scope: 'ip' };
+
+/**
+ * Address floor applied to user-scoped limits before authentication runs. Each
+ * authenticated user keeps their own bucket, but the address still cannot drive
+ * unlimited session lookups by rotating accounts.
+ */
+const ADDRESS_FLOOR_LIMIT: RateLimitOption = { limit: 600, windowSeconds: 60, scope: 'ip' };
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -79,18 +82,35 @@ export function securityHeaders(
   };
 }
 
-async function applyRateLimit(
+function isUserScoped(option: RateLimitOption): boolean {
+  return option.scope === 'user';
+}
+
+/**
+ * Address-scoped limiting runs before authentication, so an unauthenticated
+ * flood is rejected before the session lookup reaches the database.
+ */
+async function enforceAddressLimit(
   request: NextRequest,
   meta: RequestMeta,
-  user: AuthenticatedUser | null,
   option: RateLimitOption,
   bucket: string,
 ): Promise<void> {
-  const scope = option.scope ?? 'ip';
-  const identity =
-    scope === 'user' && user ? `user:${user.id}` : `ip:${meta.ipAddress ?? 'unknown'}`;
   await enforceRateLimit(
-    `${bucket}:${identity}:${request.method}`,
+    `${bucket}:ip:${meta.ipAddress ?? 'unknown'}:${request.method}`,
+    option.limit,
+    option.windowSeconds,
+  );
+}
+
+async function enforceUserLimit(
+  request: NextRequest,
+  user: AuthenticatedUser,
+  option: RateLimitOption,
+  bucket: string,
+): Promise<void> {
+  await enforceRateLimit(
+    `${bucket}:user:${user.id}:${request.method}`,
     option.limit,
     option.windowSeconds,
   );
@@ -113,23 +133,25 @@ export function withApi<P extends RouteParams = RouteParams>(
         assertSameOrigin(request);
       }
 
-      const requiresAuth = options.requiresAuth ?? true;
-      const user = requiresAuth ? await requireAuthenticatedUser(request.headers) : null;
-
       const rateLimit =
         options.rateLimit ??
         (SAFE_METHODS.has(request.method) ? DEFAULT_READ_LIMIT : DEFAULT_WRITE_LIMIT);
-      await applyRateLimit(
+
+      await enforceAddressLimit(
         request,
         meta,
-        user,
-        rateLimit,
-        options.rateLimit?.scope === 'user' ? 'api-user' : 'api-ip',
+        isUserScoped(rateLimit) ? ADDRESS_FLOOR_LIMIT : rateLimit,
+        'api',
       );
+
+      const user = await requireAuthenticatedUser(request.headers);
+      if (isUserScoped(rateLimit)) {
+        await enforceUserLimit(request, user, rateLimit, 'api');
+      }
 
       const params = ((await context?.params) ?? {}) as P;
 
-      return await handler({ request, meta, params, user: user as AuthenticatedUser });
+      return await handler({ request, meta, params, user });
     } catch (error) {
       return toErrorResponse(error, meta.requestId);
     }
@@ -165,11 +187,21 @@ export function withTenantApi<P extends RouteParams = RouteParams>(
         throw badRequest('An organization identifier is required in the request path.');
       }
 
-      const user = await requireAuthenticatedUser(request.headers);
       const rateLimit =
         options.rateLimit ??
         (SAFE_METHODS.has(request.method) ? DEFAULT_READ_LIMIT : DEFAULT_WRITE_LIMIT);
-      await applyRateLimit(request, meta, user, rateLimit, 'api-tenant');
+
+      await enforceAddressLimit(
+        request,
+        meta,
+        isUserScoped(rateLimit) ? ADDRESS_FLOOR_LIMIT : rateLimit,
+        'api-tenant',
+      );
+
+      const user = await requireAuthenticatedUser(request.headers);
+      if (isUserScoped(rateLimit)) {
+        await enforceUserLimit(request, user, rateLimit, 'api-tenant');
+      }
 
       const ctx = await requireTenantContext(
         request.headers,

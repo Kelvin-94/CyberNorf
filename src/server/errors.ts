@@ -86,7 +86,15 @@ export function toErrorResponse(error: unknown, requestId: string): Response {
           ...(error.details.length > 0 ? { details: error.details } : {}),
         },
       },
-      { status: error.statusCode, headers: { 'Cache-Control': 'no-store', ...error.headers } },
+      {
+        status: error.statusCode,
+        headers: {
+          'Cache-Control': 'no-store, max-age=0',
+          'X-Request-Id': requestId,
+          'X-Content-Type-Options': 'nosniff',
+          ...error.headers,
+        },
+      },
     );
   }
 
