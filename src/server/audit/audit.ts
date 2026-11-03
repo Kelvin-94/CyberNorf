@@ -174,12 +174,15 @@ export async function verifyAuditChain(organizationId: string): Promise<AuditCha
 
   let previousHash: string | null = null;
   let expectedSequence = 1;
+  // Number of leading events proven intact; reported on failure so callers can
+  // tell how much of the log still verifies.
+  let verified = 0;
 
   for (const event of events) {
     if (event.sequence !== expectedSequence) {
       return {
         valid: false,
-        checked: events.length,
+        checked: verified,
         reason: 'sequence_gap',
         brokenAtSequence: event.sequence,
       };
@@ -187,7 +190,7 @@ export async function verifyAuditChain(organizationId: string): Promise<AuditCha
     if (event.prevHash !== previousHash) {
       return {
         valid: false,
-        checked: events.length,
+        checked: verified,
         reason: 'link_mismatch',
         brokenAtSequence: event.sequence,
       };
@@ -211,14 +214,15 @@ export async function verifyAuditChain(organizationId: string): Promise<AuditCha
     if (expectedHash !== event.hash) {
       return {
         valid: false,
-        checked: events.length,
+        checked: verified,
         reason: 'hash_mismatch',
         brokenAtSequence: event.sequence,
       };
     }
     previousHash = event.hash;
     expectedSequence += 1;
+    verified += 1;
   }
 
-  return { valid: true, checked: events.length };
+  return { valid: true, checked: verified };
 }
