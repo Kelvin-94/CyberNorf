@@ -6,7 +6,12 @@ import { ImportFindingsForm } from '@/components/findings/import-findings-form';
 import { can } from '@/server/authz/roles';
 import { listFindingFormOptions, listFindings } from '@/server/services/findings';
 import { loadTenantContext } from '@/server/ui/session';
-import { findingQuerySchema } from '@/server/validation/findings';
+import { enumSearchParam, searchParam } from '@/server/validation/common';
+import {
+  findingQuerySchema,
+  findingSeveritySchema,
+  findingStatusSchema,
+} from '@/server/validation/findings';
 
 export const metadata: Metadata = { title: 'Findings · CyberNorf' };
 export const dynamic = 'force-dynamic';
@@ -28,10 +33,12 @@ export default async function FindingsPage({
   }
 
   const rawParams = await searchParams;
+  // Unknown filter values fall back to "any" so a hand-edited URL cannot break
+  // the page; the API keeps rejecting them with a 422.
   const query = findingQuerySchema.parse({
-    search: typeof rawParams.search === 'string' ? rawParams.search : undefined,
-    severity: typeof rawParams.severity === 'string' ? rawParams.severity : undefined,
-    status: typeof rawParams.status === 'string' ? rawParams.status : undefined,
+    search: searchParam(rawParams, 'search'),
+    severity: enumSearchParam(rawParams, 'severity', findingSeveritySchema),
+    status: enumSearchParam(rawParams, 'status', findingStatusSchema),
   });
 
   const [result, options] = await Promise.all([
@@ -67,19 +74,11 @@ export default async function FindingsPage({
       <form method="get" className="row" style={{ marginBottom: '1.25rem' }}>
         <label className="field" htmlFor="search" style={{ flex: '1 1 14rem' }}>
           Search
-          <input
-            id="search"
-            name="search"
-            defaultValue={typeof rawParams.search === 'string' ? rawParams.search : ''}
-          />
+          <input id="search" name="search" defaultValue={query.search ?? ''} />
         </label>
         <label className="field" htmlFor="severity">
           Severity
-          <select
-            id="severity"
-            name="severity"
-            defaultValue={typeof rawParams.severity === 'string' ? rawParams.severity : ''}
-          >
+          <select id="severity" name="severity" defaultValue={query.severity ?? ''}>
             <option value="">Any</option>
             {SEVERITIES.map((severity) => (
               <option key={severity} value={severity}>
@@ -90,11 +89,7 @@ export default async function FindingsPage({
         </label>
         <label className="field" htmlFor="status">
           Status
-          <select
-            id="status"
-            name="status"
-            defaultValue={typeof rawParams.status === 'string' ? rawParams.status : ''}
-          >
+          <select id="status" name="status" defaultValue={query.status ?? ''}>
             <option value="">Any</option>
             {STATUSES.map((status) => (
               <option key={status} value={status}>

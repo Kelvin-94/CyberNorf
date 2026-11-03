@@ -5,7 +5,12 @@ import { ActionForm } from '@/components/action-form';
 import { can } from '@/server/authz/roles';
 import { listAssets } from '@/server/services/assets';
 import { loadTenantContext } from '@/server/ui/session';
-import { assetQuerySchema } from '@/server/validation/organizations';
+import { enumSearchParam, searchParam } from '@/server/validation/common';
+import {
+  assetQuerySchema,
+  assetStatusSchema,
+  assetTypeSchema,
+} from '@/server/validation/organizations';
 
 export const metadata: Metadata = { title: 'Assets · CyberNorf' };
 export const dynamic = 'force-dynamic';
@@ -24,10 +29,12 @@ export default async function AssetsPage({
   }
 
   const rawParams = await searchParams;
+  // Unknown filter values fall back to "any" so a hand-edited URL cannot break
+  // the page; the API keeps rejecting them with a 422.
   const query = assetQuerySchema.parse({
-    search: typeof rawParams.search === 'string' ? rawParams.search : undefined,
-    type: typeof rawParams.type === 'string' ? rawParams.type : undefined,
-    status: typeof rawParams.status === 'string' ? rawParams.status : undefined,
+    search: searchParam(rawParams, 'search'),
+    type: enumSearchParam(rawParams, 'type', assetTypeSchema),
+    status: enumSearchParam(rawParams, 'status', assetStatusSchema),
   });
 
   const result = await listAssets(ctx.organization.id, {
@@ -61,17 +68,13 @@ export default async function AssetsPage({
           <input
             id="search"
             name="search"
-            defaultValue={typeof rawParams.search === 'string' ? rawParams.search : ''}
+            defaultValue={query.search ?? ''}
             placeholder="Name or identifier"
           />
         </label>
         <label className="field" htmlFor="status">
           Status
-          <select
-            id="status"
-            name="status"
-            defaultValue={typeof rawParams.status === 'string' ? rawParams.status : ''}
-          >
+          <select id="status" name="status" defaultValue={query.status ?? ''}>
             <option value="">Any</option>
             <option value="ACTIVE">Active</option>
             <option value="INACTIVE">Inactive</option>

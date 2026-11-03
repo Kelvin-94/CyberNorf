@@ -54,6 +54,39 @@ export function withoutUndefined<T extends object>(value: T): StripUndefined<T> 
   return result as StripUndefined<T>;
 }
 
+export type RawSearchParams = Record<string, string | string[] | undefined>;
+
+/**
+ * Reads one search parameter as trimmed text. Repeated keys and non-string
+ * values are ignored so a crafted URL cannot turn into a runtime type error.
+ */
+export function searchParam(raw: RawSearchParams, key: string): string | undefined {
+  const value = raw[key];
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Reads one search parameter and keeps it only when it is a member of the
+ * allowed set. List pages use this so an unknown filter value (for example
+ * `?severity=NOPE`) renders an unfiltered page instead of throwing.
+ */
+export function enumSearchParam<T extends string>(
+  raw: RawSearchParams,
+  key: string,
+  schema: z.ZodType<T>,
+): T | undefined {
+  const value = searchParam(raw, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = schema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
 export function firstValueQuery(request: Request): Record<string, string> {
   const query: Record<string, string> = {};
   for (const [key, value] of new URL(request.url).searchParams) {

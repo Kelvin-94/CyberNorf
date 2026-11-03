@@ -22,6 +22,8 @@ function describeReason(reason: string): string {
       return 'the referenced asset does not belong to this organization';
     case 'asset_identifier_not_found':
       return 'the asset identifier is not registered in this organization';
+    case 'duplicate_in_payload':
+      return 'the same finding appears earlier in this document';
     default:
       return reason.replaceAll('_', ' ');
   }
