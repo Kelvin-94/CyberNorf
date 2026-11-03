@@ -75,8 +75,9 @@ export async function addMember(
 ): Promise<MemberSummary> {
   assertCanManageRole(ctx.membership.role, input.role);
 
-  const user = await prisma.user.findUnique({
-    where: { email: input.email.toLowerCase() },
+  // Addresses are stored as entered at registration, so compare without case.
+  const user = await prisma.user.findFirst({
+    where: { email: { equals: input.email.trim(), mode: 'insensitive' } },
     select: { id: true, name: true, email: true },
   });
 
@@ -193,8 +194,11 @@ export async function changeMemberRole(
 
 /**
  * Removes a member by disabling the membership. The row stays in place so the
- * audit trail keeps resolving actor identities, and every session belonging to
- * the affected user is revoked so access ends immediately.
+ * audit trail keeps resolving actor identities. Authorization is evaluated per
+ * request against the membership, so disabling it ends access to this tenant
+ * immediately; sessions are only destroyed when the user has no remaining
+ * active membership anywhere, otherwise they would be signed out of the other
+ * organizations they still belong to.
  */
 export async function removeMember(ctx: TenantContext, membershipId: string): Promise<void> {
   const membership = await prisma.membership.findFirst({
@@ -229,8 +233,13 @@ export async function removeMember(ctx: TenantContext, membershipId: string): Pr
     });
 
     // Two-factor enrollment stays intact: it protects the account, not the
-    // tenant. Sessions are dropped because they carried the old membership.
-    await tx.session.deleteMany({ where: { userId: membership.user.id } });
+    // tenant. Sessions are only dropped once no active membership remains.
+    const remainingMemberships = await tx.membership.count({
+      where: { userId: membership.user.id, status: 'ACTIVE' },
+    });
+    if (remainingMemberships === 0) {
+      await tx.session.deleteMany({ where: { userId: membership.user.id } });
+    }
 
     await appendAuditEvent(tx, {
       organizationId: ctx.organization.id,

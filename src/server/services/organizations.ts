@@ -3,6 +3,7 @@ import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
 import type { TenantContext } from '@/server/authz/context';
 import type { OrgRole } from '@/server/authz/roles';
 import { conflict } from '@/server/errors';
+import { isUniqueConstraintError } from './shared';
 
 export interface OrganizationSummary {
   id: string;
@@ -51,7 +52,7 @@ export async function listUserOrganizations(userId: string): Promise<Organizatio
           slug: true,
           description: true,
           tier: true,
-          _count: { select: { memberships: true } },
+          _count: { select: { memberships: { where: { status: 'ACTIVE' } } } },
         },
       },
     },
@@ -74,8 +75,30 @@ export async function createOrganization(
   input: { name: string; slug?: string; description?: string | null },
   meta: TenantContext['meta'],
 ): Promise<OrganizationSummary> {
-  const slug = await allocateSlug(input.slug, input.name);
+  // Slug allocation is advisory: two concurrent requests can pick the same free
+  // candidate, so the unique constraint is the source of truth and a collision
+  // simply means re-allocating.
+  for (let attempt = 0; ; attempt += 1) {
+    const slug = await allocateSlug(input.slug, input.name);
+    try {
+      return await createOrganizationWithSlug(user, input, slug, meta);
+    } catch (error) {
+      if (!isUniqueConstraintError(error) || attempt >= 4) {
+        if (isUniqueConstraintError(error)) {
+          throw conflict('Unable to allocate a unique organization slug. Choose another slug.');
+        }
+        throw error;
+      }
+    }
+  }
+}
 
+async function createOrganizationWithSlug(
+  user: TenantContext['user'],
+  input: { name: string; slug?: string; description?: string | null },
+  slug: string,
+  meta: TenantContext['meta'],
+): Promise<OrganizationSummary> {
   return prisma.$transaction(async (tx) => {
     const organization = await tx.organization.create({
       data: {
