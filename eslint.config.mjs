@@ -9,5 +9,21 @@ export default defineConfig([
   ...tseslint.configs.recommended,
   reactHooks.configs.flat.recommended,
   prettier,
+  {
+    // Plain ESM scripts run on Node directly, so the Node globals they rely on
+    // are declared here instead of pulling in a browser/globals preset.
+    files: ['scripts/audit-runtime.mjs'],
+    languageOptions: {
+      globals: {
+        Buffer: 'readonly',
+        URL: 'readonly',
+        console: 'readonly',
+        fetch: 'readonly',
+        process: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+      },
+    },
+  },
   globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts', 'src/generated/prisma/**']),
 ]);
