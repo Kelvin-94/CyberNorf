@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify application foundation
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://cybernorf:cybernorf@localhost:5432/cybernorf?schema=public
+      # Build-time placeholder: authentication secrets are injected by the
+      # deployment platform, never committed or reused across environments.
+      BETTER_AUTH_SECRET: ci-only-placeholder-secret-not-for-deployment
+      BETTER_AUTH_URL: http://localhost:3000
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: cybernorf
+          POSTGRES_PASSWORD: cybernorf
+          POSTGRES_DB: cybernorf
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cybernorf -d cybernorf"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --audit-level=high
+      - run: npm run db:generate
+      - run: npm run db:validate
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - name: Apply migrations to the primary database
+        run: npm run db:migrate:deploy
+      - name: Create the isolated test database
+        run: psql -h localhost -U cybernorf -d cybernorf -c 'CREATE DATABASE cybernorf_test;'
+        env:
+          PGPASSWORD: cybernorf
+      - name: Run unit and database-backed tests
+        env:
+          DATABASE_URL: postgresql://cybernorf:cybernorf@localhost:5432/cybernorf_test?schema=public
+          NODE_ENV: test
+        run: npm run test:db:prepare && npm test
+      - run: npm run build
+
+  secret-scan:
+    name: Scan repository history for secrets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      # The pinned CLI is used instead of the action wrapper so the scan stays
+      # read-only: it needs no GitHub API scope beyond the checkout it already has.
+      - name: Install gitleaks
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          chmod +x "$RUNNER_TEMP/gitleaks"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Scan committed history for secrets
+        run: gitleaks git --no-banner --redact --exit-code 1 .
