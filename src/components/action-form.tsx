@@ -51,7 +51,10 @@ function coerce(field: FormField, raw: string): unknown {
     return Number.isFinite(parsed) ? parsed : undefined;
   }
   if (field.type === 'datetime-local') {
-    return new Date(value).toISOString();
+    // toISOString() throws on an unparseable value, so an invalid date is sent
+    // as absent and reported by server-side validation instead of crashing.
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
   }
   return value;
 }
