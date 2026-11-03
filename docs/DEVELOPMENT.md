@@ -101,6 +101,20 @@ Test coverage in this phase:
 - `tests/audit-integrity.test.ts` — every mutation appends a linked event, rows cannot be updated or deleted, chains stay valid per organization.
 - `tests/findings-workflow.test.ts` — the acceptance workflow and import deduplication.
 - `tests/rate-limit.test.ts` — window accounting and `429` behavior.
+- `tests/regression-defects.test.ts` — defects found by the runtime audit, kept as regressions: in-payload duplicate imports, concurrent import races, fingerprint stability across renames and asset deletion, session revocation scope on membership removal, active-only member counts, slug collisions, and case-insensitive member lookup.
+
+The database-backed suites rely on `TRUNCATE ... RESTART IDENTITY CASCADE` rather than row deletes, because `audit_events` rejects `DELETE` at the trigger level.
+
+## Runtime audit
+
+`scripts/audit-runtime.mjs` drives a running server over HTTP with real accounts and TOTP enrolment, and checks behavior that unit tests cannot observe: CSRF origin and `Sec-Fetch-Site` rejection, tenant isolation on reads and writes, uniform error shapes with `X-Request-Id`, content-type and body-size limits, per-user rate limiting with `Retry-After`, import races, page rendering with hostile filter values, and audit chain integrity after concurrent writes. It creates its own organizations and users, so point it at a development database only.
+
+```sh
+npm run dev          # in one shell
+npm run audit:runtime   # in another; BASE_URL overrides http://localhost:3000
+```
+
+Sign-up is rate limited per address (5/min), so the script waits out a `429` instead of failing; back-to-back runs may pause for up to a minute. The same audit runs in CI against a production build.
 
 ## Checks
 
@@ -109,10 +123,11 @@ npm run format:check
 npm run lint
 npm run typecheck
 npm test
+npm run audit:runtime
 npm run build
 ```
 
-The GitHub Actions workflow provisions PostgreSQL, applies migrations to both the primary and test databases, runs these checks, audits npm dependencies at `high`, and scans repository history for secrets.
+The GitHub Actions workflow provisions PostgreSQL, applies migrations to both the primary and test databases, runs these checks, starts a production build to run the runtime audit, audits npm dependencies at `high`, and scans repository history for secrets.
 
 ## Start the application
 
