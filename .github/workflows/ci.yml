@@ -61,6 +61,55 @@ jobs:
         run: npm run test:db:prepare && npm test
       - run: npm run build
 
+  runtime-audit:
+    name: Runtime audit against a live server
+    runs-on: ubuntu-latest
+    needs: verify
+    env:
+      DATABASE_URL: postgresql://cybernorf:cybernorf@localhost:5432/cybernorf?schema=public
+      BETTER_AUTH_SECRET: ci-only-placeholder-secret-not-for-deployment
+      BETTER_AUTH_URL: http://localhost:3000
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: cybernorf
+          POSTGRES_PASSWORD: cybernorf
+          POSTGRES_DB: cybernorf
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cybernorf -d cybernorf"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm ci --no-audit --no-fund
+      - run: npm run db:migrate:deploy
+      - run: npm run build
+      - name: Start the application server
+        run: |
+          npm run start -- --port 3000 > "$RUNNER_TEMP/server.log" 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/health > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/server.log"
+          exit 1
+      # Exercises the deployed behavior end to end: CSRF, tenant isolation, error
+      # shapes, rate limits, audit chain integrity, and page rendering.
+      - run: npm run audit:runtime
+      - name: Upload server log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log
+          path: ${{ runner.temp }}/server.log
+
   secret-scan:
     name: Scan repository history for secrets
     runs-on: ubuntu-latest
