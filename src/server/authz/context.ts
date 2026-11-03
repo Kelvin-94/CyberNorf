@@ -1,0 +1,143 @@
+import type { SubscriptionTier } from '@/generated/prisma/client';
+import { auth } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+import { AuditActions, recordAuditEvent } from '@/server/audit/audit';
+import { forbidden, notFound, unauthenticated } from '@/server/errors';
+import { getRequestMeta, type RequestMeta } from '@/server/http/request-meta';
+import { can, requiresSecondFactor, type Capability, type OrgRole } from './roles';
+
+export interface AuthenticatedUser {
+  id: string;
+  name: string;
+  email: string;
+  twoFactorEnabled: boolean;
+  sessionId: string;
+}
+
+export interface TenantContext {
+  user: AuthenticatedUser;
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+    tier: SubscriptionTier;
+  };
+  membership: {
+    id: string;
+    role: OrgRole;
+  };
+  meta: RequestMeta;
+}
+
+export async function getAuthenticatedUser(headers: Headers): Promise<AuthenticatedUser | null> {
+  const result = await auth.api.getSession({ headers });
+  if (!result) {
+    return null;
+  }
+
+  return {
+    id: result.user.id,
+    name: result.user.name,
+    email: result.user.email,
+    twoFactorEnabled: result.user.twoFactorEnabled === true,
+    sessionId: result.session.id,
+  };
+}
+
+export async function requireAuthenticatedUser(headers: Headers): Promise<AuthenticatedUser> {
+  const user = await getAuthenticatedUser(headers);
+  if (!user) {
+    throw unauthenticated();
+  }
+  return user;
+}
+
+async function auditDeniedAccess(
+  ctx: Omit<TenantContext, 'meta'>,
+  meta: RequestMeta,
+  capability: Capability,
+  reason: 'missing_capability' | 'second_factor_required',
+): Promise<void> {
+  try {
+    await recordAuditEvent({
+      organizationId: ctx.organization.id,
+      actorType: 'USER',
+      actorId: ctx.user.id,
+      action: AuditActions.ACCESS_DENIED,
+      outcome: 'DENIED',
+      targetType: 'organization',
+      targetId: ctx.organization.id,
+      summary: `Denied ${capability} for role ${ctx.membership.role}`,
+      metadata: { capability, role: ctx.membership.role, reason },
+      ipAddress: meta.ipAddress,
+      userAgent: meta.userAgent,
+      requestId: meta.requestId,
+    });
+  } catch (error) {
+    // A failing audit write must never turn a denial into an allow.
+    console.error(`[${meta.requestId}] failed to record denied access:`, error);
+  }
+}
+
+/**
+ * Resolves the tenant from the authenticated session and an organization
+ * identifier (id or slug). The membership row is the source of truth, so a
+ * client-supplied organization identifier alone never grants access.
+ *
+ * Callers that are not members receive NOT_FOUND to avoid disclosing other
+ * tenants. Members that lack the capability receive FORBIDDEN plus a DENIED
+ * audit record.
+ */
+export async function requireTenantContext(
+  headers: Headers,
+  organizationIdentifier: string,
+  capability?: Capability,
+  meta: RequestMeta = getRequestMeta(new Request('http://localhost')),
+  resolvedUser?: AuthenticatedUser,
+): Promise<TenantContext> {
+  // The API layer resolves the session once and passes it in; direct callers
+  // (server components, tests) can omit it and have it looked up here.
+  const user = resolvedUser ?? (await requireAuthenticatedUser(headers));
+
+  const organization = await prisma.organization.findFirst({
+    where: { OR: [{ id: organizationIdentifier }, { slug: organizationIdentifier }] },
+    select: { id: true, name: true, slug: true, tier: true },
+  });
+
+  if (!organization) {
+    throw notFound('Organization not found.');
+  }
+
+  const membership = await prisma.membership.findUnique({
+    where: { userId_organizationId: { userId: user.id, organizationId: organization.id } },
+    select: { id: true, role: true, status: true },
+  });
+
+  if (!membership || membership.status !== 'ACTIVE') {
+    throw notFound('Organization not found.');
+  }
+
+  const ctx: TenantContext = {
+    user,
+    organization,
+    membership: { id: membership.id, role: membership.role },
+    meta,
+  };
+
+  if (capability) {
+    if (!can(membership.role, capability)) {
+      await auditDeniedAccess(ctx, meta, capability, 'missing_capability');
+      throw forbidden('Your role does not permit this action.');
+    }
+
+    if (requiresSecondFactor(membership.role, capability) && !user.twoFactorEnabled) {
+      await auditDeniedAccess(ctx, meta, capability, 'second_factor_required');
+      throw forbidden(
+        'Privileged roles must enroll two-factor authentication before changing data.',
+        'MFA_REQUIRED',
+      );
+    }
+  }
+
+  return ctx;
+}
