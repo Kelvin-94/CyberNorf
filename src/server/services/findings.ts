@@ -126,7 +126,9 @@ export async function getFindingDetail(ctx: TenantContext, findingId: string) {
       createdAt: true,
       actor: { select: { name: true } },
     },
-    orderBy: { createdAt: 'asc' },
+    // Sequence is monotonic per organization, so events written in the same
+    // millisecond still come back in the order they were appended.
+    orderBy: { sequence: 'asc' },
     take: 200,
   });
 
@@ -234,6 +236,8 @@ export async function updateFinding(
       id: true,
       title: true,
       severity: true,
+      source: true,
+      fingerprint: true,
       assetId: true,
       assignedToId: true,
       incidentId: true,
@@ -254,11 +258,25 @@ export async function updateFinding(
     await assertIncidentInOrganization(ctx.organization.id, input.incidentId);
   }
 
+  // The fingerprint is the dedupe key, so it has to follow the fields it is
+  // derived from; otherwise re-imports stop matching this record.
+  const nextTitle = input.title ?? existing.title;
+  const nextAssetId = input.assetId !== undefined ? input.assetId : existing.assetId;
+  const fingerprint =
+    nextTitle === existing.title && nextAssetId === existing.assetId
+      ? existing.fingerprint
+      : findingFingerprint({
+          organizationId: ctx.organization.id,
+          assetId: nextAssetId,
+          title: nextTitle,
+          source: existing.source,
+        });
+
   try {
     return await prisma.$transaction(async (tx) => {
       const finding = await tx.finding.update({
         where: { id: existing.id },
-        data: input,
+        data: { ...input, fingerprint },
         select: FINDING_SUMMARY_SELECT,
       });
 
@@ -379,49 +397,70 @@ export interface ImportFindingItem {
   remediation?: string | null;
 }
 
+export type ImportSkipReason =
+  'asset_not_found' | 'asset_identifier_not_found' | 'duplicate_in_payload';
+
 export interface ImportResult {
   created: number;
   updated: number;
-  skipped: Array<{ index: number; title: string; reason: string }>;
+  skipped: Array<{ index: number; title: string; reason: ImportSkipReason }>;
+}
+
+interface PreparedImportItem {
+  index: number;
+  assetId: string | null;
+  fingerprint: string;
+  item: ImportFindingItem;
 }
 
 /**
  * Imports normalized findings from a JSON document. Items are deduplicated by
  * fingerprint within the organization: existing findings have their last-seen
  * timestamp refreshed, new items are inserted. Unknown asset identifiers are
- * reported per item rather than failing the whole import.
+ * reported per item rather than failing the whole import. Concurrent batches
+ * that race on the same fingerprint are replayed once instead of failing.
  */
 export async function importFindings(
   ctx: TenantContext,
   items: ImportFindingItem[],
 ): Promise<ImportResult> {
-  const assets = await prisma.asset.findMany({
-    where: { organizationId: ctx.organization.id },
-    select: { id: true, identifier: true },
-    take: 5000,
-  });
-  const assetByIdentifier = new Map(assets.map((asset) => [asset.identifier, asset.id]));
+  // Referenced assets are resolved with two bounded lookups instead of loading
+  // the whole inventory, so imports stay correct for large inventories.
+  const identifiers = [...new Set(items.flatMap((item) => item.assetIdentifier ?? []))];
+  const assetIds = [...new Set(items.flatMap((item) => item.assetId ?? []))];
+
+  const [assetsByIdentifier, assetsById] = await Promise.all([
+    identifiers.length === 0
+      ? Promise.resolve<Array<{ id: string; identifier: string }>>([])
+      : prisma.asset.findMany({
+          where: { organizationId: ctx.organization.id, identifier: { in: identifiers } },
+          select: { id: true, identifier: true },
+        }),
+    assetIds.length === 0
+      ? Promise.resolve<Array<{ id: string }>>([])
+      : prisma.asset.findMany({
+          where: { organizationId: ctx.organization.id, id: { in: assetIds } },
+          select: { id: true },
+        }),
+  ]);
+
+  const knownAssetIds = new Set(assetsById.map((asset) => asset.id));
+  const identifierToId = new Map(assetsByIdentifier.map((asset) => [asset.identifier, asset.id]));
 
   const skipped: ImportResult['skipped'] = [];
-  const prepared: Array<{
-    index: number;
-    assetId: string | null;
-    fingerprint: string;
-    item: ImportFindingItem;
-  }> = [];
+  const prepared: PreparedImportItem[] = [];
+  const seenFingerprints = new Set<string>();
 
   items.forEach((item, index) => {
+    let assetId: string | null = null;
     if (item.assetId) {
-      const known = assets.some((asset) => asset.id === item.assetId);
-      if (!known) {
+      if (!knownAssetIds.has(item.assetId)) {
         skipped.push({ index, title: item.title, reason: 'asset_not_found' });
         return;
       }
-    }
-
-    let assetId = item.assetId ?? null;
-    if (!assetId && item.assetIdentifier) {
-      const resolved = assetByIdentifier.get(item.assetIdentifier);
+      assetId = item.assetId;
+    } else if (item.assetIdentifier) {
+      const resolved = identifierToId.get(item.assetIdentifier);
       if (!resolved) {
         skipped.push({ index, title: item.title, reason: 'asset_identifier_not_found' });
         return;
@@ -429,23 +468,45 @@ export async function importFindings(
       assetId = resolved;
     }
 
-    prepared.push({
-      index,
+    const fingerprint = findingFingerprint({
+      organizationId: ctx.organization.id,
       assetId,
-      fingerprint: findingFingerprint({
-        organizationId: ctx.organization.id,
-        assetId,
-        title: item.title,
-        source: 'IMPORT',
-      }),
-      item,
+      title: item.title,
+      source: 'IMPORT',
     });
+
+    // Repeating an item inside one payload would violate the fingerprint unique
+    // index when the batch is inserted, so the first occurrence wins.
+    if (seenFingerprints.has(fingerprint)) {
+      skipped.push({ index, title: item.title, reason: 'duplicate_in_payload' });
+      return;
+    }
+    seenFingerprints.add(fingerprint);
+    prepared.push({ index, assetId, fingerprint, item });
   });
 
   if (prepared.length === 0) {
     return { created: 0, updated: 0, skipped };
   }
 
+  try {
+    return await applyImport(ctx, prepared, items.length, skipped);
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) {
+      throw error;
+    }
+    // A concurrent import inserted the same fingerprint between the read and the
+    // write. Replaying the batch turns the conflict into a last-seen refresh.
+    return applyImport(ctx, prepared, items.length, skipped);
+  }
+}
+
+async function applyImport(
+  ctx: TenantContext,
+  prepared: PreparedImportItem[],
+  submitted: number,
+  skipped: ImportResult['skipped'],
+): Promise<ImportResult> {
   return prisma.$transaction(async (tx) => {
     const existing = await tx.finding.findMany({
       where: {
@@ -530,7 +591,7 @@ export async function importFindings(
         created: toCreate.length,
         refreshed: toRefresh.length,
         skipped: skipped.length,
-        submitted: items.length,
+        submitted,
       },
       ipAddress: ctx.meta.ipAddress,
       userAgent: ctx.meta.userAgent,

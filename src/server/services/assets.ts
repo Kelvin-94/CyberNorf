@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
 import type { TenantContext } from '@/server/authz/context';
 import { conflict, notFound } from '@/server/errors';
-import { isUniqueConstraintError, paginationMeta } from './shared';
+import { findingFingerprint, isUniqueConstraintError, paginationMeta } from './shared';
 
 export interface AssetListQuery {
   search?: string | null;
@@ -226,7 +226,36 @@ export async function deleteAsset(ctx: TenantContext, assetId: string): Promise<
   }
 
   await prisma.$transaction(async (tx) => {
+    // The finding fingerprint covers the asset id, so findings left behind by the
+    // delete (assetId is set to NULL) need theirs recomputed or a later import of
+    // the same title would no longer match them.
+    const orphaned = await tx.finding.findMany({
+      where: { organizationId: ctx.organization.id, assetId: existing.id },
+      select: { id: true, title: true, source: true },
+    });
+
     await tx.asset.delete({ where: { id: existing.id } });
+
+    for (const finding of orphaned) {
+      const fingerprint = findingFingerprint({
+        organizationId: ctx.organization.id,
+        assetId: null,
+        title: finding.title,
+        source: finding.source,
+      });
+      // Guarded in SQL so an existing unscoped finding that already owns the same
+      // fingerprint keeps it instead of aborting the transaction.
+      await tx.$executeRaw`
+        UPDATE "findings" SET "fingerprint" = ${fingerprint}
+        WHERE "id" = ${finding.id}
+          AND "organizationId" = ${ctx.organization.id}
+          AND NOT EXISTS (
+            SELECT 1 FROM "findings" AS other
+            WHERE other."organizationId" = ${ctx.organization.id}
+              AND other."fingerprint" = ${fingerprint}
+          )`;
+    }
+
     await appendAuditEvent(tx, {
       organizationId: ctx.organization.id,
       actorType: 'USER',
@@ -236,7 +265,11 @@ export async function deleteAsset(ctx: TenantContext, assetId: string): Promise<
       targetType: 'asset',
       targetId: existing.id,
       summary: `Asset ${existing.name} deleted`,
-      metadata: { name: existing.name, identifier: existing.identifier },
+      metadata: {
+        name: existing.name,
+        identifier: existing.identifier,
+        findingsKept: orphaned.length,
+      },
       ipAddress: ctx.meta.ipAddress,
       userAgent: ctx.meta.userAgent,
       requestId: ctx.meta.requestId,
