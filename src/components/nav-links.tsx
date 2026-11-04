@@ -21,7 +21,7 @@ export function NavLinks({ items }: { items: NavItem[] }) {
           return null;
         }
         return (
-          <div key={group}>
+          <div key={group} className="nav-group">
             <p className="nav-group-label">{group}</p>
             {groupItems.map((item) => {
               const active = pathname === item.href || pathname.startsWith(`${item.href}/`);

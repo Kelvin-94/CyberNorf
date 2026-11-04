@@ -140,12 +140,21 @@ a {
   gap: 0.2rem;
 }
 
+/* Each group is its own column: the links are block-level inside it, otherwise
+   they render inline and overflow the sidebar. */
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
 .nav-link {
   padding: 0.5rem 0.65rem;
   border-radius: 0.5rem;
   color: var(--muted);
   font-size: 0.92rem;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .nav-link:hover {
