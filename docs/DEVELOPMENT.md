@@ -40,6 +40,17 @@ Compose publishes PostgreSQL on `POSTGRES_HOST_PORT` (default `5432`). If that p
 
 If Prisma reports `P1001: Can't reach database server` while `nc -z 127.0.0.1 <port>` succeeds, replace `localhost` with `127.0.0.1` in the connection string. Some macOS setups resolve `localhost` to IPv6 first, where the container is not listening.
 
+### Transport security in production
+
+A production build refuses to serve traffic over an insecure link. `src/instrumentation.ts` calls `assertSecureTransport()` before the first request and the process answers `500` to everything if either check fails:
+
+- `BETTER_AUTH_URL` must be an `https://` origin. Session cookies are only marked `Secure` when `NODE_ENV=production`, so a plain-http deployment would hand out cookies the browser never sends back. `localhost`, `127.0.0.1` and `[::1]` are exempt because nothing leaves the machine and browsers treat loopback as a secure context.
+- `DATABASE_URL` must include `sslmode=require` (or `verify-ca` / `verify-full` with a CA) when the database is remote. Loopback hosts and unix sockets are exempt because that traffic never leaves the host.
+
+TLS itself is terminated in front of the app. `src/proxy.ts` redirects anything that is not `x-forwarded-proto: https` with a `308`, so the proxy has to forward that header. `next.config.ts` adds HSTS, CSP, `X-Frame-Options`, `Referrer-Policy` and `Permissions-Policy` to every response; HSTS is production-only so local development is never pinned to https.
+
+The bundled Compose database stores no TLS certificate and is bound to `127.0.0.1`, so it is for local development only. Use a managed PostgreSQL with TLS for anything shared.
+
 ## Database and migrations
 
 The Phase 1 schema and its migrations are checked in:
@@ -97,6 +108,7 @@ Test coverage in this phase:
 - `src/server/domain/transitions.test.ts` — allowed and rejected finding and incident transitions.
 - `src/server/audit/canonical.test.ts` — canonical serialization and hash stability.
 - `src/server/validation/findings.test.ts` — input normalization and bounds.
+- `src/server/config.test.ts` — production transport rules: https origin, loopback exemption, and TLS for remote databases.
 - `tests/tenant-isolation.test.ts` — cross-tenant reads, writes, relationship abuse, disabled memberships, and MFA enforcement.
 - `tests/audit-integrity.test.ts` — every mutation appends a linked event, rows cannot be updated or deleted, chains stay valid per organization.
 - `tests/findings-workflow.test.ts` — the acceptance workflow and import deduplication.
@@ -152,16 +164,17 @@ npm run build
 npm run start
 ```
 
-The build requires `BETTER_AUTH_SECRET` to be a valid 32+ character value when `NODE_ENV=production`, so provide it in the environment or `.env` before building.
+The build requires `BETTER_AUTH_SECRET` to be a valid 32+ character value when `NODE_ENV=production`, so provide it in the environment or `.env` before building. A local production server on `localhost`/`127.0.0.1` is accepted over http; a production host must use https and gets `308` redirects for plain-http requests (see [Transport security in production](#transport-security-in-production)).
 
 ## Troubleshooting
 
-| Symptom                                              | Likely cause and fix                                                                                                                              |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docker compose up` fails: port already allocated    | Another PostgreSQL is running on 5432. Set `POSTGRES_HOST_PORT` to a free port and update `DATABASE_URL`.                                         |
-| Prisma `P1001`                                       | Wrong host or port. Try `127.0.0.1` instead of `localhost`; check `docker compose ps`.                                                            |
-| Tests abort with "refusing to run against ..."       | `DATABASE_URL` in `.env.test` does not point at a database whose name contains `test`.                                                            |
-| `403 MFA_REQUIRED` on every create/update            | The signed-in `OWNER` or `ADMIN` has not enrolled TOTP. Open `/account/security`.                                                                 |
-| `403 Cross-site requests are not allowed`            | `BETTER_AUTH_URL` does not match the origin in the browser address bar.                                                                           |
-| Prisma "Failed to deserialize column of type 'void'" | A raw query selected a `void` function result. Wrap advisory-lock calls in a subquery that returns a normal column.                               |
-| Audit verification reports `hash_mismatch`           | An audit row changed outside the application. The trigger blocks the normal path, so investigate direct database access; do not "repair" the row. |
+| Symptom                                              | Likely cause and fix                                                                                                                                      |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker compose up` fails: port already allocated    | Another PostgreSQL is running on 5432. Set `POSTGRES_HOST_PORT` to a free port and update `DATABASE_URL`.                                                 |
+| Prisma `P1001`                                       | Wrong host or port. Try `127.0.0.1` instead of `localhost`; check `docker compose ps`.                                                                    |
+| Tests abort with "refusing to run against ..."       | `DATABASE_URL` in `.env.test` does not point at a database whose name contains `test`.                                                                    |
+| `403 MFA_REQUIRED` on every create/update            | The signed-in `OWNER` or `ADMIN` has not enrolled TOTP. Open `/account/security`.                                                                         |
+| `403 Cross-site requests are not allowed`            | `BETTER_AUTH_URL` does not match the origin in the browser address bar.                                                                                   |
+| Production start logs `Failed to prepare server`     | `BETTER_AUTH_URL` is not `https://` for a non-loopback host, or `DATABASE_URL` points at a remote database without `sslmode`. Fix the URL, not the check. |
+| Prisma "Failed to deserialize column of type 'void'" | A raw query selected a `void` function result. Wrap advisory-lock calls in a subquery that returns a normal column.                                       |
+| Audit verification reports `hash_mismatch`           | An audit row changed outside the application. The trigger blocks the normal path, so investigate direct database access; do not "repair" the row.         |
