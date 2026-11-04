@@ -4,6 +4,17 @@
 
 CyberNorf is an early-stage project. Do not assume it has undergone a security audit, is suitable for production, or safely handles sensitive data. Do not use it to process real secrets, regulated data, or customer information until the relevant protections have been implemented and reviewed.
 
+## Transport security
+
+The application expects TLS to be terminated in front of it and enforces the boundary rather than assuming it:
+
+- A production build refuses to serve requests when `BETTER_AUTH_URL` is a plain-http origin on a non-loopback host, or when `DATABASE_URL` reaches a remote database without `sslmode`. The check runs from `src/instrumentation.ts` before the first request.
+- `src/proxy.ts` returns `308` to `https://` for any request that does not arrive with `x-forwarded-proto: https`, so a proxy misconfiguration cannot silently serve sessions in cleartext.
+- Every response carries HSTS (production), CSP, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` and a restrictive `Permissions-Policy`; the `X-Powered-By` banner is disabled.
+- Session cookies are `HttpOnly`, `SameSite=Lax` and `Secure` in production, and the session cookie cache is disabled so server-side revocation takes effect immediately.
+
+Known gap: `script-src` still allows `'unsafe-inline'` because Next.js emits an inline bootstrap script without a nonce. Framing, plugins, `<base>` injection and cross-origin form posts are already blocked by the same policy.
+
 ## Reporting a vulnerability
 
 Please report suspected vulnerabilities privately to the project maintainer through a verified private contact channel associated with the repository owner. If no private contact channel is published, contact the maintainer before sharing sensitive technical details. Do not place credentials, personal data, or weaponized proof-of-concept material in public issues.
