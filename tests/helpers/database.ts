@@ -19,14 +19,17 @@ export function assertTestDatabase(): void {
 }
 
 /**
- * Empties every application table. TRUNCATE is used because the audit table
- * rejects row-level deletes by design; the trigger bypass here is limited to
- * test resets.
+ * Empties every tenant table. TRUNCATE is used because the audit table rejects
+ * row-level deletes by design; the trigger bypass here is limited to test
+ * resets. The global compliance catalog (frameworks and their controls) is
+ * seeded by migration and shared by every tenant, so it is left in place.
  */
 export async function resetDatabase(): Promise<void> {
   assertTestDatabase();
   const tables = await prisma.$queryRaw<Array<{ tablename: string }>>`
-    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'
+    SELECT tablename FROM pg_tables
+    WHERE schemaname = 'public'
+      AND tablename NOT IN ('_prisma_migrations', 'frameworks', 'framework_controls')
   `;
   if (tables.length === 0) {
     return;

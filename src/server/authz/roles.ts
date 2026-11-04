@@ -29,6 +29,9 @@ export const CAPABILITIES = [
   'incident.note',
   'incident.delete',
   'audit.read',
+  'compliance.read',
+  'compliance.evidence',
+  'compliance.manage',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -48,6 +51,8 @@ export const MUTATING_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability
   'incident.update',
   'incident.note',
   'incident.delete',
+  'compliance.evidence',
+  'compliance.manage',
 ]);
 
 const READ_ONLY_CAPABILITIES: readonly Capability[] = [
@@ -56,6 +61,7 @@ const READ_ONLY_CAPABILITIES: readonly Capability[] = [
   'finding.read',
   'incident.read',
   'audit.read',
+  'compliance.read',
 ];
 
 const ANALYST_CAPABILITIES: readonly Capability[] = [
@@ -68,6 +74,8 @@ const ANALYST_CAPABILITIES: readonly Capability[] = [
   'incident.create',
   'incident.update',
   'incident.note',
+  // Analysts may attach evidence but not attest controls or adopt frameworks.
+  'compliance.evidence',
 ];
 
 const ADMIN_CAPABILITIES: readonly Capability[] = [
@@ -77,6 +85,7 @@ const ADMIN_CAPABILITIES: readonly Capability[] = [
   'asset.delete',
   'finding.delete',
   'incident.delete',
+  'compliance.manage',
 ];
 
 export const ROLE_CAPABILITIES: Readonly<Record<OrgRole, ReadonlySet<Capability>>> = {
