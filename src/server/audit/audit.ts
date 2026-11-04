@@ -23,6 +23,11 @@ export const AuditActions = {
   INCIDENT_NOTE_ADDED: 'incident.note_added',
   INCIDENT_FINDING_LINKED: 'incident.finding_linked',
   INCIDENT_FINDING_UNLINKED: 'incident.finding_unlinked',
+  COMPLIANCE_FRAMEWORK_ADOPTED: 'compliance.framework_adopted',
+  COMPLIANCE_FRAMEWORK_WITHDRAWN: 'compliance.framework_withdrawn',
+  COMPLIANCE_CONTROL_UPDATED: 'compliance.control_updated',
+  COMPLIANCE_EVIDENCE_ADDED: 'compliance.evidence_added',
+  COMPLIANCE_EVIDENCE_REMOVED: 'compliance.evidence_removed',
   ACCESS_DENIED: 'access.denied',
 } as const;
 

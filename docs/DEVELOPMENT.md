@@ -58,6 +58,8 @@ The Phase 1 schema and its migrations are checked in:
 - `20261102114540_phase1_soc_foundation` — identity, organizations, assets, findings, incidents, and audit tables.
 - `20261102114550_audit_append_only_guard` — the trigger that rejects `UPDATE` and `DELETE` on `audit_events`.
 - `20261102115532_organization_description` — organization descriptions.
+- `20261104095010_compliance_frameworks` — compliance catalog (`frameworks`, `framework_controls`), tenant adoption and attestation tables, control evidence, the curated framework seed (61 controls across SOC 2, ISO/IEC 27001, NIST CSF 2.0, PCI DSS, and GDPR), and the single-target and review-date CHECK constraints.
+- `20261104095310_compliance_control_position` — explicit `position` on catalog controls so the UI lists them in standard order. Both migrations are safe to replay on an empty database.
 
 Apply them to the development database:
 
@@ -114,8 +116,28 @@ Test coverage in this phase:
 - `tests/findings-workflow.test.ts` — the acceptance workflow and import deduplication.
 - `tests/rate-limit.test.ts` — window accounting and `429` behavior.
 - `tests/regression-defects.test.ts` — defects found by the runtime audit, kept as regressions: in-payload duplicate imports, concurrent import races, fingerprint stability across renames and asset deletion, session revocation scope on membership removal, active-only member counts, slug collisions, and case-insensitive member lookup.
+- `src/server/domain/compliance.test.ts` — weighted posture scoring, band thresholds, and the evidence/attestation rules.
+- `tests/compliance.test.ts` — adopt, re-adopt conflict, implement-without-evidence refusal, cross-tenant evidence rejection, review-date stamping, last-evidence protection, withdrawal guards, catalog ordering, and per-tenant control isolation.
 
-The database-backed suites rely on `TRUNCATE ... RESTART IDENTITY CASCADE` rather than row deletes, because `audit_events` rejects `DELETE` at the trigger level.
+The database-backed suites rely on `TRUNCATE ... RESTART IDENTITY CASCADE` rather than row deletes, because `audit_events` rejects `DELETE` at the trigger level. `frameworks` and `framework_controls` are excluded from the truncate: they are seeded by migration and shared by every tenant.
+
+## Compliance module
+
+The compliance surface lives in `src/server/services/compliance.ts`, `src/server/domain/compliance.ts`, and `src/app/app/[orgSlug]/compliance/**`. Tenant-scoped endpoints are mounted under `/api/v1/organizations/:orgSlug/compliance`:
+
+| Method and path                                 | Capability            | Purpose                                                                      |
+| ----------------------------------------------- | --------------------- | ---------------------------------------------------------------------------- |
+| `GET /compliance`                               | `compliance.read`     | Weighted posture, per-framework cards, integrity warnings, and risk signals. |
+| `GET /compliance/frameworks`                    | `compliance.read`     | Catalog with this tenant's adoption state.                                   |
+| `POST /compliance/frameworks`                   | `compliance.manage`   | Adopt a framework (accepts a framework id or code).                          |
+| `GET /compliance/frameworks/:frameworkKey`      | `compliance.read`     | Controls, attestations, evidence, and framework activity.                    |
+| `DELETE /compliance/frameworks/:frameworkKey`   | `compliance.manage`   | Withdraw an adoption; refused while evidence is attached.                    |
+| `PATCH /compliance/controls/:controlId`         | `compliance.manage`   | Move the attestation status, owner, review date, or notes.                   |
+| `POST /compliance/controls/:controlId/evidence` | `compliance.evidence` | Attach finding, incident, asset, or reference evidence.                      |
+| `DELETE /compliance/evidence/:evidenceId`       | `compliance.evidence` | Remove evidence; refused for the last support of an `IMPLEMENTED` control.   |
+| `GET /compliance/options`                       | `compliance.read`     | Members and evidence targets for the forms.                                  |
+
+`compliance.manage` and `compliance.evidence` are mutating capabilities, so owners and admins need a TOTP second factor before either succeeds.
 
 ## Runtime audit
 
