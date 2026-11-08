@@ -30,6 +30,21 @@ export function findingFingerprint(input: {
     .digest('hex');
 }
 
+/**
+ * Stable identity for a finding raised by an agent check. The check id plus the
+ * scanned target is the identity, so two agents reporting the same weakness on
+ * the same host converge on one finding instead of duplicating it every run.
+ */
+export function agentFingerprint(organizationId: string, checkId: string, target: string): string {
+  return createHash('sha256')
+    .update(
+      [organizationId, 'agent', checkId.trim().toLowerCase(), target.trim().toLowerCase()].join(
+        '|',
+      ),
+    )
+    .digest('hex');
+}
+
 export async function assertAssetInOrganization(
   organizationId: string,
   assetId: string | null | undefined,

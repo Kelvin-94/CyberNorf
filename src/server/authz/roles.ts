@@ -32,6 +32,8 @@ export const CAPABILITIES = [
   'compliance.read',
   'compliance.evidence',
   'compliance.manage',
+  'agent.read',
+  'agent.manage',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -53,6 +55,7 @@ export const MUTATING_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability
   'incident.delete',
   'compliance.evidence',
   'compliance.manage',
+  'agent.manage',
 ]);
 
 const READ_ONLY_CAPABILITIES: readonly Capability[] = [
@@ -62,6 +65,7 @@ const READ_ONLY_CAPABILITIES: readonly Capability[] = [
   'incident.read',
   'audit.read',
   'compliance.read',
+  'agent.read',
 ];
 
 const ANALYST_CAPABILITIES: readonly Capability[] = [
@@ -86,6 +90,9 @@ const ADMIN_CAPABILITIES: readonly Capability[] = [
   'finding.delete',
   'incident.delete',
   'compliance.manage',
+  // Admins may register and manage agent records, but approval, suspension and
+  // revocation of an agent remain owner-only decisions enforced in the service.
+  'agent.manage',
 ];
 
 export const ROLE_CAPABILITIES: Readonly<Record<OrgRole, ReadonlySet<Capability>>> = {

@@ -100,6 +100,9 @@ export async function getFindingDetail(ctx: TenantContext, findingId: string) {
       remediation: true,
       fingerprint: true,
       createdBy: { select: { id: true, name: true, email: true } },
+      // Agent-raised findings keep both provenances: the operator who registered
+      // the agent and the agent itself.
+      agent: { select: { id: true, name: true } },
       incident: { select: { id: true, title: true, status: true } },
       asset: { select: { id: true, name: true, identifier: true, criticality: true } },
     },
