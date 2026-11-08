@@ -53,7 +53,9 @@ export default async function FindingDetailPage({
       <div className="page-header">
         <div>
           <p className="eyebrow">
-            {finding.source} · {finding.cveId ?? 'No CVE'}
+            {finding.agent
+              ? `${finding.source} · raised by ${finding.agent.name}`
+              : `${finding.source} · ${finding.cveId ?? 'No CVE'}`}
           </p>
           <h1>{finding.title}</h1>
         </div>
@@ -108,7 +110,18 @@ export default async function FindingDetailPage({
           </div>
           <div>
             <dt>Reported by</dt>
-            <dd>{finding.createdBy.name}</dd>
+            <dd>
+              {finding.agent ? (
+                <>
+                  <Link href={`${base}/agents/${finding.agent.id}`}>{finding.agent.name}</Link>{' '}
+                  <span className="muted small">
+                    (agent, registered by {finding.createdBy.name})
+                  </span>
+                </>
+              ) : (
+                finding.createdBy.name
+              )}
+            </dd>
           </div>
           <div>
             <dt>Resolved</dt>

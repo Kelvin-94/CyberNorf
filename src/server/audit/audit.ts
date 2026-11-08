@@ -28,6 +28,12 @@ export const AuditActions = {
   COMPLIANCE_CONTROL_UPDATED: 'compliance.control_updated',
   COMPLIANCE_EVIDENCE_ADDED: 'compliance.evidence_added',
   COMPLIANCE_EVIDENCE_REMOVED: 'compliance.evidence_removed',
+  AGENT_REGISTERED: 'agent.registered',
+  AGENT_APPROVED: 'agent.approved',
+  AGENT_SUSPENDED: 'agent.suspended',
+  AGENT_RESUMED: 'agent.resumed',
+  AGENT_REVOKED: 'agent.revoked',
+  AGENT_RUN_RECORDED: 'agent.run_recorded',
   ACCESS_DENIED: 'access.denied',
 } as const;
 

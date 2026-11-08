@@ -37,6 +37,9 @@ test('analysts manage investigation data but cannot delete or administer', () =>
     'audit.read',
     'compliance.read',
     'compliance.evidence',
+    // Agents are visible to every role, but connecting or approving one is an
+    // administrative decision.
+    'agent.read',
   ];
   for (const capability of granted) {
     assert.equal(can('ANALYST', capability), true, `ANALYST should have ${capability}`);
@@ -51,6 +54,7 @@ test('analysts manage investigation data but cannot delete or administer', () =>
     // Attesting a control or adopting a framework is an ADMIN decision, even
     // though analysts can attach the evidence that supports it.
     'compliance.manage',
+    'agent.manage',
   ];
   for (const capability of denied) {
     assert.equal(can('ANALYST', capability), false, `ANALYST should not have ${capability}`);
@@ -62,6 +66,10 @@ test('compliance attestation requires a second factor for privileged roles', () 
   assert.equal(requiresSecondFactor('ADMIN', 'compliance.evidence'), true);
   assert.equal(requiresSecondFactor('OWNER', 'compliance.read'), false);
   assert.equal(requiresSecondFactor('ANALYST', 'compliance.manage'), false);
+  assert.equal(requiresSecondFactor('OWNER', 'agent.manage'), true);
+  assert.equal(requiresSecondFactor('ADMIN', 'agent.manage'), true);
+  assert.equal(requiresSecondFactor('OWNER', 'agent.read'), false);
+  assert.equal(requiresSecondFactor('ANALYST', 'agent.read'), false);
 });
 
 test('administrators can administer but never exceed owners', () => {

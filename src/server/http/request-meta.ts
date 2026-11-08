@@ -56,6 +56,33 @@ export function assertSameOrigin(request: Request): void {
   }
 }
 
+/**
+ * Reads a JSON body that may be absent. Lifecycle endpoints accept an empty
+ * body because the action is carried by the URL, and an optional note is the
+ * only payload a caller can send.
+ */
+export async function readOptionalJsonBody(
+  request: Request,
+  maxBytes = 16 * 1024,
+): Promise<unknown> {
+  const contentType = request.headers.get('content-type') ?? '';
+  const text = await request.text();
+  if (text.trim().length === 0) {
+    return {};
+  }
+  if (!contentType.toLowerCase().startsWith('application/json')) {
+    throw new AppError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Requests must use application/json.');
+  }
+  if (Buffer.byteLength(text, 'utf8') > maxBytes) {
+    throw new AppError(413, 'PAYLOAD_TOO_LARGE', 'The request body is too large.');
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new AppError(400, 'BAD_REQUEST', 'The request body must be valid JSON.');
+  }
+}
+
 export async function readJsonBody(request: Request, maxBytes = 256 * 1024): Promise<unknown> {
   const contentType = request.headers.get('content-type') ?? '';
   if (!contentType.toLowerCase().startsWith('application/json')) {

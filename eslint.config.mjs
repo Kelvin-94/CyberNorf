@@ -12,9 +12,10 @@ export default defineConfig([
   {
     // Plain ESM scripts run on Node directly, so the Node globals they rely on
     // are declared here instead of pulling in a browser/globals preset.
-    files: ['scripts/audit-runtime.mjs'],
+    files: ['scripts/audit-runtime.mjs', 'scripts/agent/monitor.mjs'],
     languageOptions: {
       globals: {
+        AbortSignal: 'readonly',
         Buffer: 'readonly',
         URL: 'readonly',
         console: 'readonly',

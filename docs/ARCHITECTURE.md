@@ -27,6 +27,9 @@
 | Domain services                                               | `src/server/services/*.ts`                                   |
 | Input validation                                              | `src/server/validation/*.ts`                                 |
 | Workflow state machines                                       | `src/server/domain/transitions.ts`                           |
+| Agent domain rules (tokens, scopes, lifecycle)                 | `src/server/domain/agents.ts`                                |
+| Agent bearer-token route wrapper                              | `src/server/api/agent.ts`                                    |
+| Builtin offline host monitor                                 | `scripts/agent/monitor.mjs`                                  |
 | UI routes and components                                      | `src/app/**`, `src/components/**`                            |
 | Tests                                                         | `tests/*.test.ts`, `src/**/*.test.ts`                        |
 
@@ -55,13 +58,15 @@ All tenant rows carry `organizationId` and are only reachable through a resolved
 | `Organization`                                                         | Tenant root. `slug` is unique and restricted to lowercase hostname-safe characters. `tier` is recorded but gates no capability in v1.                                                                                                          |
 | `Membership`                                                           | `role` (`OWNER`, `ADMIN`, `ANALYST`, `VIEWER`) and `status` (`ACTIVE`, `DISABLED`), unique per user and organization. Removal is a soft disable.                                                                                               |
 | `Asset`                                                                | Organization-owned inventory: type, identifier, criticality, lifecycle status, and `verificationStatus`. Identifier is unique per organization. `verificationStatus` records an operator declaration only; no DNS or IAM proof is implemented. |
-| `Finding`                                                              | Vulnerability or observation with severity, status, source (`MANUAL` or `IMPORT`), a fingerprint unique per organization used for import deduplication, optional CVE, CVSS score, asset, assignee, incident, and remediation text.             |
+| `Finding`                                                              | Vulnerability or observation with severity, status, source (`MANUAL`, `IMPORT`, or `AGENT`), a fingerprint unique per organization used for deduplication, optional CVE, CVSS score, asset, assignee, incident, optional `agentId` provenance, and remediation text. |
 | `Incident`                                                             | Investigation record with severity, status, detection and closure timestamps, assignee, and linked findings.                                                                                                                                   |
 | `IncidentNote`                                                         | Append-only-by-convention investigation notes with author and body.                                                                                                                                                                            |
 | `Framework`, `FrameworkControl`                                        | Global read-only catalog of compliance frameworks and their controls. Seeded by migration, identical for every tenant, and ordered by an explicit `position` so the list reads like the standard.                                              |
 | `OrganizationFramework`                                                | One tenant's adoption of a catalog framework, unique per organization and framework, with adoption date, adopting user, and an optional target audit date.                                                                                     |
 | `OrganizationControl`                                                  | Per-tenant attestation of one catalog control: status, owner, notes, review dates, and who last updated it. Unique per adoption and control. A CHECK constraint requires `lastReviewedAt` whenever the status is `PARTIAL` or `IMPLEMENTED`.   |
 | `ControlEvidence`                                                      | Audit-grade support for a control, pointing at exactly one finding, incident, asset, or external reference. A CHECK constraint enforces the single-target rule in the database as well as in validation.                                       |
+| `Agent`                                                                | Scoped monitoring agent: source (`BUILTIN`, `OPENAI`, `ANTHROPIC`, `CUSTOM`, `OTHER`), status, granted scopes, SHA-256 `tokenHash` (unique), display prefix, expiry, approval and revocation stamps, and last-seen counters. Unique name per organization. |
+| `AgentRun`                                                             | One submitted monitoring run: host, platform, timing, derived pass/fail/skip counts, linked findings, and the raw check array. Runs are immutable history; findings carry the operational state. |
 | `AuditEvent`                                                           | Hash-chained, append-only security record (see below).                                                                                                                                                                                         |
 | `ApiRateLimit`                                                         | Shared fixed-window counters for application routes.                                                                                                                                                                                           |
 
@@ -80,9 +85,13 @@ The matrix lives in `src/server/authz/roles.ts` and is the single source of trut
 | `compliance.read`                                           |  yes  |  yes  |   yes   |  yes   |
 | `compliance.evidence`                                       |  yes  |  yes  |   yes   |   no   |
 | `compliance.manage`                                         |  yes  |  yes  |   no    |   no   |
+| `agent.read`                                                |  yes  |  yes  |   yes   |  yes   |
+| `agent.manage`                                              |  yes  |  yes  |   no    |   no   |
 | `organization.update`, `organization.manage_members`        |  yes  |  yes  |   no    |   no   |
 
 `OWNER` and `ADMIN` must have a TOTP second factor enrolled before any mutating capability succeeds. Unknown roles and unlisted capabilities are denied.
+
+`agent.manage` admits administrators to registration, but approval, suspension, resumption, and revocation are additionally restricted to `OWNER` inside the service, because they issue or destroy a credential.
 
 ### Workflow state machines
 
@@ -103,6 +112,19 @@ Frameworks are adopted per tenant; adoption creates one attestation row per cata
 
 The bundled catalog is a curated subset of each standard (SOC 2, ISO/IEC 27001, NIST CSF 2.0, PCI DSS, GDPR) and explicitly not the complete control text; the UI and API label it as a tracking aid rather than a legal opinion or a certification.
 
+### Monitoring agents
+
+Agents collect host evidence and submit it to CyberNorf. The platform never calls a model provider, so monitoring keeps working on a network with no outbound Internet access; the only network action is the agent's own request to your instance.
+
+- Sources: `BUILTIN` (the bundled `scripts/agent/monitor.mjs`), `OPENAI`, `ANTHROPIC`, `CUSTOM`, and `OTHER`. The source is provenance, not trust: every source goes through the same scoped report endpoint.
+- Approval: a `BUILTIN` agent is registered by an owner or administrator and starts `ACTIVE`, because the operator is installing it on a host the organization already owns. Every external source is created `PENDING_APPROVAL` with no token hash at all, and only an `OWNER` can approve it. Approval issues the credential and may narrow the requested scopes; it cannot widen them.
+- Credentials: `cna_` plus 32 random bytes, base64url. Only the SHA-256 hash is stored, plus a six-character display prefix. Builtin tokens live 365 days and third-party tokens 90 days. The plaintext token is returned exactly once, from registration or approval, and cannot be recovered afterwards.
+- Scopes: `monitor.report` submits runs, `monitor.read` reads the agent's own record and history. A request outside the granted set returns `403`. Agent routes are wrapped by `withAgentApi`, which reads only the `Authorization: Bearer` header, never a session cookie, and rate-limits 60 requests per minute per address before authentication and 120 per minute per agent afterwards.
+- Lifecycle: `PENDING_APPROVAL → ACTIVE → SUSPENDED → ACTIVE`, with `REVOKED` reachable from every non-revoked state and terminal. Suspension keeps history but stops the credential; revocation clears the token hash as well as the status.
+- Ingestion: the agent sends observations only. `POST /api/v1/agents/me/runs` derives the run status (every check skipped is `PARTIAL`, no checks at all is `FAILED`), the pass/fail/skip counts, and the findings. Each failed check creates or refreshes one finding keyed by a fingerprint over organization, check id, and target, attributed to the agent's registering operator with `source = AGENT` and `agentId` set. A finding a person already resolved, accepted as risk, or marked a false positive is not reopened by a later run; the run reports it as suppressed instead.
+- History: runs are immutable; the console drills down from an agent to its runs and from a run to the checks and linked findings. Every registration, approval, suspension, resumption, revocation, and accepted run appends to the audit chain, with `actorType = AGENT` for runs.
+- Offline operation: `monitor.mjs` has no dependencies beyond Node. It collects locally, can write a report with `--out` on an air-gapped host, and can submit a carried report with `--in` from a connected host. A check whose evidence is unreadable is reported `SKIP` rather than passed, so reduced coverage is visible instead of implied assurance.
+
 ### Audit trail
 
 Appends are transactional with the mutation, have a per-organization advisory lock, and are chained with SHA-256 over a canonical serialization (`sequence`, previous hash, actor, action, outcome, target, summary, metadata, timestamp). A database trigger rejects `UPDATE` and `DELETE`. `GET /api/v1/organizations/:orgSlug/audit/verify` recomputes the chain and reports the first broken sequence; the audit page exposes the same check.
@@ -111,7 +133,7 @@ Appends are transactional with the mutation, have a per-organization advisory lo
 
 - Public: landing page, `sign-in`, `sign-up`, `two-factor` challenge.
 - Account: `account/security` for TOTP enrollment and backup codes.
-- Tenant workspace under `/app/:orgSlug`: dashboard, assets (list and detail), findings (list, detail, status control, JSON import), incidents (list, detail, notes, linked findings), compliance (posture overview, framework detail with attestations, control detail with evidence), audit (filters and chain verification), members, and settings.
+- Tenant workspace under `/app/:orgSlug`: dashboard, assets (list and detail), findings (list, detail, status control, JSON import), incidents (list, detail, notes, linked findings), compliance (posture overview, framework detail with attestations, control detail with evidence), agents (list, registration with one-time token reveal, detail with approval and lifecycle controls, run drill-down), audit (filters and chain verification), members, and settings.
 - Navigation renders only capabilities the current membership holds, but enforcement always happens on the server.
 
 ### Known limitations of this phase
@@ -121,7 +143,9 @@ Appends are transactional with the mutation, have a per-organization advisory lo
 - No file upload or export. Compliance evidence links to existing findings, incidents, and assets, or to an external reference string; documents are not stored.
 - Rate-limit counters are not garbage collected.
 - The audit chain is hash-linked but not signed.
-- No background worker, execution layer, or integrations; every workflow is synchronous HTTP.
+- No background worker, execution layer, or integrations; every workflow is synchronous HTTP. Agents run on their own schedule (cron, `launchd`, Task Scheduler); the platform never initiates a scan.
+- Agent tokens cannot be rotated in place. Rotation is revoke-and-register, which is why revocation is separate from suspension.
+- The monitor's checks are a conservative baseline for Linux and macOS hosts; they are not a CIS benchmark, and no Windows-specific check is implemented.
 
 ## Target logical components (later phases)
 

@@ -80,6 +80,8 @@ enum FindingStatus {
 enum FindingSource {
   MANUAL
   IMPORT
+  /// Produced by an approved monitoring agent run.
+  AGENT
 }
 
 enum IncidentSeverity {
@@ -127,6 +129,36 @@ enum AuditOutcome {
 enum AuditActorType {
   USER
   SYSTEM
+  /// An approved monitoring agent acting with its own scoped token.
+  AGENT
+}
+
+/// Where an agent comes from. BUILTIN is the first-party offline monitor;
+/// every other value records an external vendor or a custom integration that
+/// was connected by an operator and approved by the organization owner.
+enum AgentSource {
+  BUILTIN
+  OPENAI
+  ANTHROPIC
+  CUSTOM
+  OTHER
+}
+
+/// Agent lifecycle. Only ACTIVE agents can authenticate; PENDING_APPROVAL,
+/// SUSPENDED and REVOKED agents are rejected at the token resolver.
+enum AgentStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+/// Outcome of one monitoring run, derived server-side from the reported
+/// checks: every check skipped is FAILED, a partial set is PARTIAL.
+enum AgentRunStatus {
+  COMPLETED
+  PARTIAL
+  FAILED
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +189,8 @@ model User {
   updatedControls   OrganizationControl[]   @relation("ControlUpdatedBy")
   controlEvidence   ControlEvidence[]       @relation("EvidenceCreatedBy")
   adoptedFrameworks OrganizationFramework[] @relation("FrameworkAdoptedBy")
+  createdAgents     Agent[]                 @relation("AgentCreatedBy")
+  approvedAgents    Agent[]                 @relation("AgentApprovedBy")
 
   @@unique([email])
   @@map("user")
@@ -254,6 +288,8 @@ model Organization {
   frameworks  OrganizationFramework[]
   controls    OrganizationControl[]
   evidence    ControlEvidence[]
+  agents      Agent[]
+  agentRuns   AgentRun[]
 
   @@map("organizations")
 }
@@ -303,6 +339,7 @@ model Finding {
   organizationId  String
   assetId         String?
   incidentId      String?
+  agentId         String?
   title           String
   description     String?
   severity        FindingSeverity
@@ -324,12 +361,14 @@ model Finding {
   incident        Incident?         @relation(fields: [incidentId], references: [id], onDelete: SetNull)
   createdBy       User              @relation("FindingCreatedBy", fields: [createdById], references: [id])
   assignedTo      User?             @relation("FindingAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  agent           Agent?            @relation(fields: [agentId], references: [id], onDelete: SetNull)
   controlEvidence ControlEvidence[]
 
   @@unique([organizationId, fingerprint])
   @@index([organizationId, status])
   @@index([organizationId, severity])
   @@index([organizationId, assetId])
+  @@index([organizationId, agentId])
   @@map("findings")
 }
 
@@ -483,6 +522,75 @@ model ControlEvidence {
   @@index([organizationControlId, createdAt])
   @@index([organizationId])
   @@map("control_evidence")
+}
+
+// ---------------------------------------------------------------------------
+// Agents (offline monitoring and owner-approved external agents)
+// ---------------------------------------------------------------------------
+
+/// A monitoring agent bound to one organization. The bearer token is stored as
+/// a SHA-256 hash plus a short display prefix, so a database reader cannot
+/// recover a usable credential; the plaintext is shown once at registration
+/// (builtin agents) or approval (every external source).
+model Agent {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  source         AgentSource
+  status         AgentStatus  @default(PENDING_APPROVAL)
+  /// Granted scopes from the agent scope catalog; enforced per request.
+  scopes         String[]
+  tokenHash      String?      @unique
+  tokenPrefix    String?
+  tokenExpiresAt DateTime?
+  lastSeenAt     DateTime?
+  lastRunAt      DateTime?
+  runCount       Int          @default(0)
+  createdById    String
+  approvedById   String?
+  approvedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      User         @relation("AgentCreatedBy", fields: [createdById], references: [id])
+  approvedBy     User?        @relation("AgentApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  runs           AgentRun[]
+  findings       Finding[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, status])
+  @@map("agents")
+}
+
+/// One monitoring run reported by an agent. Counts and status are derived
+/// server-side from the submitted checks; the raw check list is kept so the
+/// console can show what the agent actually observed.
+model AgentRun {
+  id                String         @id @default(cuid())
+  organizationId    String
+  agentId           String
+  status            AgentRunStatus
+  hostname          String?
+  platform          String?
+  startedAt         DateTime
+  finishedAt        DateTime?
+  durationMs        Int?
+  checkCount        Int            @default(0)
+  passCount         Int            @default(0)
+  failCount         Int            @default(0)
+  skipCount         Int            @default(0)
+  findingsCreated   Int            @default(0)
+  findingsRefreshed Int            @default(0)
+  checks            Json
+  createdAt         DateTime       @default(now())
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  agent             Agent          @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, startedAt])
+  @@index([agentId, startedAt])
+  @@map("agent_runs")
 }
 
 /// Append-only audit trail. A database trigger rejects UPDATE and DELETE on

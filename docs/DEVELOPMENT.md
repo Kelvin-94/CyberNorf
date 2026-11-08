@@ -118,6 +118,8 @@ Test coverage in this phase:
 - `tests/regression-defects.test.ts` — defects found by the runtime audit, kept as regressions: in-payload duplicate imports, concurrent import races, fingerprint stability across renames and asset deletion, session revocation scope on membership removal, active-only member counts, slug collisions, and case-insensitive member lookup.
 - `src/server/domain/compliance.test.ts` — weighted posture scoring, band thresholds, and the evidence/attestation rules.
 - `tests/compliance.test.ts` — adopt, re-adopt conflict, implement-without-evidence refusal, cross-tenant evidence rejection, review-date stamping, last-evidence protection, withdrawal guards, catalog ordering, and per-tenant control isolation.
+- `src/server/domain/agents.test.ts` — token shape and hashing, token TTLs, one-time prefix, lifecycle table, scope defaults, and derived run status.
+- `tests/agents.test.ts` — builtin activation, external approval (owner-only, narrowing-only), token authentication, run ingestion and finding deduplication, closed-finding suppression, suspension/resumption/revocation, cross-tenant isolation, and audit-chain growth.
 
 The database-backed suites rely on `TRUNCATE ... RESTART IDENTITY CASCADE` rather than row deletes, because `audit_events` rejects `DELETE` at the trigger level. `frameworks` and `framework_controls` are excluded from the truncate: they are seeded by migration and shared by every tenant.
 
@@ -138,6 +140,61 @@ The compliance surface lives in `src/server/services/compliance.ts`, `src/server
 | `GET /compliance/options`                       | `compliance.read`     | Members and evidence targets for the forms.                                  |
 
 `compliance.manage` and `compliance.evidence` are mutating capabilities, so owners and admins need a TOTP second factor before either succeeds.
+
+## Agent monitoring
+
+The agent surface lives in `src/server/services/agents.ts`, `src/server/domain/agents.ts`, `src/server/api/agent.ts`, `src/app/app/[orgSlug]/agents/**`, and `scripts/agent/monitor.mjs`. Console endpoints are mounted under `/api/v1/organizations/:orgSlug/agents` and use the normal cookie session:
+
+| Method and path                 | Capability     | Purpose                                                                 |
+| ------------------------------- | -------------- | ----------------------------------------------------------------------- |
+| `GET /agents`                   | `agent.read`   | Agent list with status and run counts.                                  |
+| `POST /agents`                  | `agent.manage` | Register an agent; a builtin one is activated and its token shown once. |
+| `GET /agents/:agentId`          | `agent.read`   | Record, scopes, credential metadata, runs, and raised findings.         |
+| `DELETE /agents/:agentId`       | `agent.manage` | Revoke permanently (owner only).                                        |
+| `POST /agents/:agentId/approve` | `agent.manage` | Approve a pending agent and issue its token (owner only).               |
+| `POST /agents/:agentId/suspend` | `agent.manage` | Suspend; the token keeps its scopes but is rejected until resume.       |
+| `POST /agents/:agentId/resume`  | `agent.manage` | Resume a suspended agent (owner only).                                  |
+
+Agents call two routes that accept only a bearer token, never a session cookie:
+
+| Method and path               | Scope            | Purpose                                                             |
+| ----------------------------- | ---------------- | ------------------------------------------------------------------- |
+| `GET /api/v1/agents/me`       | `monitor.read`   | The agent's own record, scopes, and expiry.                         |
+| `GET /api/v1/agents/me/runs`  | `monitor.read`   | The agent's recent runs.                                            |
+| `POST /api/v1/agents/me/runs` | `monitor.report` | Submit a run; counts, status, and findings are derived server-side. |
+
+### Running the builtin monitor
+
+Register a `BUILTIN` agent in the console, copy the token from the one-time reveal, then run the monitor on the host you want to check:
+
+```sh
+CYBERNORF_AGENT_TOKEN=<token> node scripts/agent/monitor.mjs --org-url http://localhost:3000
+node scripts/agent/monitor.mjs --dry-run                 # collect and print, submit nothing
+node scripts/agent/monitor.mjs --out report.json         # air-gapped host: write only
+node scripts/agent/monitor.mjs --in report.json --token <token>   # submit later
+```
+
+Each check carries two labels: `title` names the control that was evaluated (`Host firewall state`) and is what the run table shows, while `findingTitle` states the faulty condition (`Host firewall is disabled`) and is used as the finding title when the check fails. Custom agents should send both; when `findingTitle` is omitted the server falls back to `title`, which is why the field is optional rather than required.
+
+The script needs nothing but Node: no npm install and no cloud API. It reads local evidence only (`sshd_config`, `sudoers`, `socketfilterfw`, FileVault, `lsof`, file permissions, guest account and autologin). A check whose evidence is unreadable returns `SKIP`, and a check that throws is reported `SKIP` rather than passed. Exit codes: `0` submitted or dry-run, `1` submission failed, `2` bad usage. A report written with `--out` is mode `0600`.
+
+### Scheduling and rotation
+
+CyberNorf never initiates a scan, so schedule the monitor on the host itself, for example a `launchd` agent on macOS, a systemd timer on Linux, or a weekly cron entry on a hardened jump host. Tokens cannot be rotated in place: revoke the agent, register a replacement, and update the host's environment. Suspension is the reversible option when a host is being rebuilt.
+
+### Demo flow
+
+1. Sign in as the organization owner and open `/app/:orgSlug/agents`.
+2. Register `builtin-monitor` with source `BUILTIN`; the page reveals the token exactly once.
+3. Run the monitor with that token and refresh; the run appears with its pass/fail/skip breakdown and any new findings.
+4. Register an `ANTHROPIC` agent: it stays `PENDING_APPROVAL` with no credential.
+5. Approve it as the owner (optionally narrowing scopes) and copy the token from the reveal; then suspend, resume, and revoke it from the detail page.
+
+After adding a migration, apply it to the test database before running the suite:
+
+```sh
+set -a && . ./.env.test && set +a && npx prisma migrate deploy
+```
 
 ## Runtime audit
 
