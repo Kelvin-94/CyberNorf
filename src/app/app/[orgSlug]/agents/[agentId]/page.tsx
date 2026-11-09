@@ -6,6 +6,7 @@ import { ApproveAgentForm } from '@/components/agents/approve-agent-form';
 import { AgentHeartbeatForm } from '@/components/agents/agent-heartbeat-form';
 import { AgentStatusBadge } from '@/components/agents/agent-status-badge';
 import { CheckMapForm } from '@/components/agents/check-map-form';
+import { RotateAgentTokenForm } from '@/components/agents/rotate-agent-token-form';
 import { can } from '@/server/authz/roles';
 import { canTransitionAgent, AGENT_SCOPE_DETAILS, AGENT_SCOPES } from '@/server/domain/agents';
 import { getAgentDetail } from '@/server/services/agents';
@@ -124,7 +125,9 @@ export default async function AgentDetailPage({
         </p>
         <p className="small muted">
           The credential is stored only as a SHA-256 hash. It is issued once, on registration for
-          builtin agents and on owner approval for external sources.
+          builtin agents and on owner approval for external sources, and can be rotated without
+          losing this agent&apos;s history. Submissions may be signed with a key derived from the
+          credential, which rotation replaces as well.
         </p>
         <p className="small muted">
           Registered {formatTimestamp(agent.createdAt)}
@@ -229,6 +232,19 @@ export default async function AgentDetailPage({
 
         {!isOwner && agent.status !== 'REVOKED' && agent.status !== 'PENDING_APPROVAL' ? (
           <p className="small muted">Only an organization owner can change this agent's state.</p>
+        ) : null}
+
+        {isOwner && agent.status === 'ACTIVE' ? (
+          <div className="stack" style={{ marginTop: '1.25rem' }}>
+            <h3>Rotate credential</h3>
+            <RotateAgentTokenForm
+              orgSlug={ctx.organization.slug}
+              agentId={agent.id}
+              agentName={agent.name}
+              tokenPrefix={agent.tokenPrefix}
+              expiresAt={agent.tokenExpiresAt}
+            />
+          </div>
         ) : null}
       </section>
 

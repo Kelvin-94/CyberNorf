@@ -11,6 +11,12 @@ export interface AgentHandlerInput<P extends RouteParams> {
   meta: RequestMeta;
   params: P;
   agent: AgentPrincipal;
+  /**
+   * The plaintext credential from the Authorization header. It is needed to
+   * verify a signed body, because the signing key is derived from the token
+   * itself; it must never be echoed in a response.
+   */
+  credential: string;
 }
 
 /** Pre-authentication floor per client address, per method. */
@@ -72,7 +78,7 @@ export function withAgentApi<P extends RouteParams = RouteParams>(
 
       const params = ((await context?.params) ?? {}) as P;
 
-      return await handler({ request, meta, params, agent });
+      return await handler({ request, meta, params, agent, credential: token });
     } catch (error) {
       return toErrorResponse(error, meta.requestId);
     }

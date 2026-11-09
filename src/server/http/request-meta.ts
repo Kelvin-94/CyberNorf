@@ -83,7 +83,14 @@ export async function readOptionalJsonBody(
   }
 }
 
-export async function readJsonBody(request: Request, maxBytes = 256 * 1024): Promise<unknown> {
+/**
+ * Reads a bounded JSON body and returns the exact bytes that were received.
+ *
+ * Agent submissions are signed over the raw body, so the signature has to be
+ * checked against the same string that is then parsed; re-serializing a parsed
+ * object would not reproduce the agent's bytes.
+ */
+export async function readRawJsonBody(request: Request, maxBytes = 256 * 1024): Promise<string> {
   const contentType = request.headers.get('content-type') ?? '';
   if (!contentType.toLowerCase().startsWith('application/json')) {
     throw new AppError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Requests must use application/json.');
@@ -99,9 +106,18 @@ export async function readJsonBody(request: Request, maxBytes = 256 * 1024): Pro
     throw new AppError(413, 'PAYLOAD_TOO_LARGE', 'The request body is too large.');
   }
 
+  return text;
+}
+
+/** Parses a body that {@link readRawJsonBody} already bounded. */
+export function parseJsonBody(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
     throw new AppError(400, 'BAD_REQUEST', 'The request body must be valid JSON.');
   }
+}
+
+export async function readJsonBody(request: Request, maxBytes = 256 * 1024): Promise<unknown> {
+  return parseJsonBody(await readRawJsonBody(request, maxBytes));
 }
