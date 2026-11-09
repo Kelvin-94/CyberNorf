@@ -36,6 +36,10 @@ export const AuditActions = {
   AGENT_RUN_RECORDED: 'agent.run_recorded',
   AGENT_CHECK_MAPPED: 'agent.check_mapped',
   AGENT_CHECK_UNMAPPED: 'agent.check_unmapped',
+  AGENT_HEARTBEAT_UPDATED: 'agent.heartbeat_updated',
+  NOTIFICATION_CHANNEL_CREATED: 'notification.channel_created',
+  NOTIFICATION_CHANNEL_DELETED: 'notification.channel_deleted',
+  NOTIFICATION_TEST_SENT: 'notification.test_sent',
   ACCESS_DENIED: 'access.denied',
 } as const;
 

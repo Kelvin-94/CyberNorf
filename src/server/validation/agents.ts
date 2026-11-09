@@ -130,6 +130,24 @@ export const createCheckMapSchema = z
   })
   .strict();
 
+/**
+ * Operator expectation for reporting cadence, in minutes. Null clears the
+ * expectation and turns offline detection off for that agent. The lower bound
+ * keeps a badly chosen interval from producing an alert loop.
+ */
+export const agentHeartbeatSchema = z
+  .object({
+    expectedIntervalMinutes: z
+      .number()
+      .int('Use whole minutes.')
+      .min(5, 'Check at least every 5 minutes.')
+      .max(10080, 'Use an interval of seven days or less.')
+      .nullable(),
+  })
+  .strict();
+
+export type AgentHeartbeatInput = z.infer<typeof agentHeartbeatSchema>;
+
 /** The overview is scoped to one agent's observed checks when an id is given. */
 export const checkMapQuerySchema = z.object({ agentId: cuidLikeSchema.optional() });
 

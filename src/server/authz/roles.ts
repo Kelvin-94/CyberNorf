@@ -34,6 +34,8 @@ export const CAPABILITIES = [
   'compliance.manage',
   'agent.read',
   'agent.manage',
+  'notification.read',
+  'notification.manage',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -56,6 +58,7 @@ export const MUTATING_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability
   'compliance.evidence',
   'compliance.manage',
   'agent.manage',
+  'notification.manage',
 ]);
 
 const READ_ONLY_CAPABILITIES: readonly Capability[] = [
@@ -66,6 +69,7 @@ const READ_ONLY_CAPABILITIES: readonly Capability[] = [
   'audit.read',
   'compliance.read',
   'agent.read',
+  'notification.read',
 ];
 
 const ANALYST_CAPABILITIES: readonly Capability[] = [
@@ -93,6 +97,9 @@ const ADMIN_CAPABILITIES: readonly Capability[] = [
   // Admins may register and manage agent records, but approval, suspension and
   // revocation of an agent remain owner-only decisions enforced in the service.
   'agent.manage',
+  // Alert destinations receive organization telemetry, so analysts and viewers
+  // can read the delivery log but only administrators can add or remove a URL.
+  'notification.manage',
 ];
 
 export const ROLE_CAPABILITIES: Readonly<Record<OrgRole, ReadonlySet<Capability>>> = {

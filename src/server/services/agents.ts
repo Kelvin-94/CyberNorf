@@ -13,10 +13,12 @@ import {
   summarizeChecks,
   type AgentCheckCounts,
 } from '@/server/domain/agents';
+import { deriveAgentHealth, type AgentHealth } from '@/server/domain/notifications';
 import { badRequest, conflict, forbidden, notFound, unauthenticated } from '@/server/errors';
 import { attachMappedEvidence, loadMappedControls } from '@/server/services/check-maps';
 import { agentFingerprint, isUniqueConstraintError } from '@/server/services/shared';
 import type {
+  AgentHeartbeatInput,
   AgentRunReportInput,
   AgentScopeInput,
   RegisterAgentInput,
@@ -34,6 +36,12 @@ export interface AgentView {
   tokenExpiresAt: string | null;
   lastSeenAt: string | null;
   lastRunAt: string | null;
+  /** Operator-configured reporting cadence; null disables offline detection. */
+  expectedIntervalMinutes: number | null;
+  /** When an offline alert was queued, cleared by the next healthy run. */
+  offlineNotifiedAt: string | null;
+  /** Derived from status, cadence and last run: ONLINE, STALE, OFFLINE or UNKNOWN. */
+  health: AgentHealth;
   runCount: number;
   createdById: string;
   approvedById: string | null;
@@ -89,6 +97,8 @@ export const AGENT_SELECT = {
   tokenExpiresAt: true,
   lastSeenAt: true,
   lastRunAt: true,
+  expectedIntervalMinutes: true,
+  offlineNotifiedAt: true,
   runCount: true,
   createdById: true,
   approvedById: true,
@@ -127,6 +137,13 @@ export function serializeAgent(agent: AgentRow): AgentView {
     tokenExpiresAt: agent.tokenExpiresAt ? agent.tokenExpiresAt.toISOString() : null,
     lastSeenAt: agent.lastSeenAt ? agent.lastSeenAt.toISOString() : null,
     lastRunAt: agent.lastRunAt ? agent.lastRunAt.toISOString() : null,
+    expectedIntervalMinutes: agent.expectedIntervalMinutes,
+    offlineNotifiedAt: agent.offlineNotifiedAt ? agent.offlineNotifiedAt.toISOString() : null,
+    health: deriveAgentHealth({
+      status: agent.status,
+      lastRunAt: agent.lastRunAt,
+      expectedIntervalMinutes: agent.expectedIntervalMinutes,
+    }),
     runCount: agent.runCount,
     createdById: agent.createdById,
     approvedById: agent.approvedById,
@@ -510,6 +527,63 @@ export async function resumeAgent(
       targetId: row.id,
       summary: `Resumed agent "${row.name}"`,
       metadata: { note },
+      ipAddress: ctx.meta.ipAddress,
+      userAgent: ctx.meta.userAgent,
+      requestId: ctx.meta.requestId,
+    });
+
+    return serializeAgent(row);
+  });
+}
+
+/**
+ * Records the operator's expected reporting cadence.
+ *
+ * The interval is a monitoring expectation, not an access grant, so it does not
+ * need owner approval. Clearing it turns offline detection off for the agent;
+ * the pending outage marker is cleared too, so re-enabling an interval later
+ * does not immediately alert for a window nobody was watching.
+ */
+export async function updateAgentHeartbeat(
+  ctx: TenantContext,
+  agentId: string,
+  input: AgentHeartbeatInput,
+): Promise<AgentView> {
+  const agent = await loadAgent(ctx, agentId);
+  if (agent.status === 'REVOKED') {
+    throw conflict('A revoked agent cannot be reconfigured.');
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const previous = await tx.agent.findUniqueOrThrow({
+      where: { id: agent.id },
+      select: { expectedIntervalMinutes: true },
+    });
+    const row = await tx.agent.update({
+      where: { id: agent.id },
+      data: {
+        expectedIntervalMinutes: input.expectedIntervalMinutes,
+        ...(input.expectedIntervalMinutes === null ? { offlineNotifiedAt: null } : {}),
+      },
+      select: AGENT_SELECT,
+    });
+
+    await appendAuditEvent(tx, {
+      organizationId: ctx.organization.id,
+      actorType: 'USER',
+      actorId: ctx.user.id,
+      action: AuditActions.AGENT_HEARTBEAT_UPDATED,
+      outcome: 'SUCCESS',
+      targetType: 'agent',
+      targetId: row.id,
+      summary:
+        input.expectedIntervalMinutes === null
+          ? `Disabled offline detection for agent "${row.name}"`
+          : `Agent "${row.name}" expected every ${input.expectedIntervalMinutes} minutes`,
+      metadata: {
+        previousIntervalMinutes: previous.expectedIntervalMinutes,
+        expectedIntervalMinutes: input.expectedIntervalMinutes,
+      },
       ipAddress: ctx.meta.ipAddress,
       userAgent: ctx.meta.userAgent,
       requestId: ctx.meta.requestId,

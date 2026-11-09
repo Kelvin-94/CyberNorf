@@ -81,6 +81,7 @@ export default async function AgentsPage({ params }: { params: Promise<{ orgSlug
                 <th>Agent</th>
                 <th>Source</th>
                 <th>Status</th>
+                <th>Health</th>
                 <th>Scopes</th>
                 <th>Last run</th>
                 <th>Runs</th>
@@ -96,6 +97,24 @@ export default async function AgentsPage({ params }: { params: Promise<{ orgSlug
                   <td className="small">{agent.source}</td>
                   <td>
                     <AgentStatusBadge status={agent.status} />
+                  </td>
+                  <td>
+                    <span
+                      className={`badge ${
+                        agent.health === 'ONLINE'
+                          ? 'success'
+                          : agent.health === 'OFFLINE'
+                            ? 'denied'
+                            : 'medium'
+                      }`}
+                    >
+                      {agent.health.toLowerCase()}
+                    </span>
+                    <div className="small muted">
+                      {agent.expectedIntervalMinutes
+                        ? `every ${agent.expectedIntervalMinutes} min`
+                        : 'no interval'}
+                    </div>
                   </td>
                   <td className="mono small">{agent.scopes.join(', ')}</td>
                   <td className="small">{formatTimestamp(agent.lastRunAt)}</td>

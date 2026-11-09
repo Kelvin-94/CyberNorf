@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ActionButton } from '@/components/action-button';
 import { ApproveAgentForm } from '@/components/agents/approve-agent-form';
+import { AgentHeartbeatForm } from '@/components/agents/agent-heartbeat-form';
 import { AgentStatusBadge } from '@/components/agents/agent-status-badge';
 import { CheckMapForm } from '@/components/agents/check-map-form';
 import { can } from '@/server/authz/roles';
@@ -82,6 +83,29 @@ export default async function AgentDetailPage({
           <p className="small muted">Expires {formatTimestamp(agent.tokenExpiresAt)}</p>
         </div>
         <div className="stat">
+          <p className="stat-label">Monitoring</p>
+          <p className="stat-value small">
+            <span
+              className={`badge ${
+                agent.health === 'ONLINE'
+                  ? 'success'
+                  : agent.health === 'STALE'
+                    ? 'medium'
+                    : agent.health === 'OFFLINE'
+                      ? 'denied'
+                      : 'medium'
+              }`}
+            >
+              {agent.health.toLowerCase()}
+            </span>
+          </p>
+          <p className="small muted">
+            {agent.expectedIntervalMinutes
+              ? `Expected every ${agent.expectedIntervalMinutes} min`
+              : 'No expected interval'}
+          </p>
+        </div>
+        <div className="stat">
           <p className="stat-label">Open findings</p>
           <p className="stat-value">
             {detail.findings.filter((finding) => finding.status !== 'RESOLVED').length}
@@ -104,6 +128,34 @@ export default async function AgentDetailPage({
           {agent.approvedAt ? ` · approved ${formatTimestamp(agent.approvedAt)}` : ''}
           {agent.revokedAt ? ` · revoked ${formatTimestamp(agent.revokedAt)}` : ''}
         </p>
+      </section>
+
+      <section className="card stack" style={{ marginTop: '1.5rem', maxWidth: '46rem' }}>
+        <h2>Monitoring</h2>
+        <p className="small muted">
+          Offline detection compares the last recorded run with the interval below. A scheduled
+          sweep queues one signed alert per enabled destination when the interval is missed twice,
+          and a recovery alert when the agent reports again.
+        </p>
+        {agent.offlineNotifiedAt ? (
+          <p className="banner warning">
+            An offline alert was queued {formatTimestamp(agent.offlineNotifiedAt)} and has not been
+            cleared by a new run yet.
+          </p>
+        ) : null}
+        {canManageMapping && agent.status !== 'REVOKED' ? (
+          <AgentHeartbeatForm
+            orgSlug={ctx.organization.slug}
+            agentId={agent.id}
+            currentIntervalMinutes={agent.expectedIntervalMinutes}
+          />
+        ) : (
+          <p className="small muted">
+            {agent.expectedIntervalMinutes
+              ? `Expecting a report every ${agent.expectedIntervalMinutes} minutes.`
+              : 'No expected interval is configured, so this agent is not watched for silence.'}
+          </p>
+        )}
       </section>
 
       <section className="card stack" style={{ marginTop: '1.5rem', maxWidth: '46rem' }}>
