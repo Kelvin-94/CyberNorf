@@ -26,6 +26,8 @@ import path from 'node:path';
 
 const SCHEMA_VERSION = 1;
 const COMMAND_TIMEOUT_MS = 10_000;
+/** Matches the server cap: 800 packages per report (MAX_INVENTORY_ITEMS). */
+const MAX_INVENTORY_ITEMS = 800;
 const RISKY_PORTS = new Map([
   [21, 'FTP'],
   [23, 'Telnet'],
@@ -87,6 +89,15 @@ function run(command, args = [], timeout = COMMAND_TIMEOUT_MS) {
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 4 * 1024 * 1024,
   });
+}
+
+/** Like run(), but returns null instead of throwing when the command is absent. */
+function tryRun(command, args = [], timeout = COMMAND_TIMEOUT_MS) {
+  try {
+    return run(command, args, timeout);
+  } catch {
+    return null;
+  }
 }
 
 const isMac = process.platform === 'darwin';
@@ -500,6 +511,109 @@ const checks = [
   },
 ];
 
+/**
+ * Software inventory for advisory matching.
+ *
+ * Only local package managers are queried, with no registry or network access:
+ * Homebrew (formulae and casks), npm global packages, pip, dpkg and rpm. Absent
+ * managers are skipped silently, because an uninstalled package manager is not
+ * a security finding. The result is a snapshot of the host that the platform
+ * replaces on every run.
+ */
+function collectInventory() {
+  const items = [];
+  const seen = new Set();
+
+  function add(ecosystem, name, version) {
+    if (items.length >= MAX_INVENTORY_ITEMS) {
+      return;
+    }
+    const cleanName = String(name ?? '').trim();
+    const cleanVersion = String(version ?? '').trim();
+    if (!/^[A-Za-z0-9@][A-Za-z0-9@._+/:-]*$/.test(cleanName)) {
+      return;
+    }
+    if (!/^[0-9A-Za-z][0-9A-Za-z.+~:_-]*$/.test(cleanVersion)) {
+      return;
+    }
+    const key = `${ecosystem}::${cleanName.toLowerCase()}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    items.push({ ecosystem, name: cleanName, version: cleanVersion });
+  }
+
+  // `brew list --versions` prints "name version [older versions…]"; the newest
+  // installed build is the last field, which is what an advisory applies to.
+  for (const args of [
+    ['list', '--versions'],
+    ['list', '--cask', '--versions'],
+  ]) {
+    const output = tryRun('brew', args);
+    if (!output) {
+      continue;
+    }
+    for (const line of output.split('\n')) {
+      const fields = line.trim().split(/\s+/).filter(Boolean);
+      if (fields.length >= 2) {
+        add('BREW', fields[0], fields[fields.length - 1]);
+      }
+    }
+  }
+
+  const npmListing = tryRun('npm', ['ls', '-g', '--json', '--depth=0']);
+  if (npmListing) {
+    try {
+      const parsed = JSON.parse(npmListing);
+      for (const [name, dependency] of Object.entries(parsed?.dependencies ?? {})) {
+        if (dependency && typeof dependency === 'object' && dependency.version) {
+          add('NPM', name, dependency.version);
+        }
+      }
+    } catch {
+      // Unparseable npm output is reported by the inventory count, not a check.
+    }
+  }
+
+  for (const python of ['python3', 'python']) {
+    const output = tryRun(python, ['-m', 'pip', 'list', '--format=freeze']);
+    if (!output) {
+      continue;
+    }
+    for (const line of output.split('\n')) {
+      const separator = line.indexOf('==');
+      if (separator > 0) {
+        add('PYPI', line.slice(0, separator), line.slice(separator + 2));
+      }
+    }
+    break;
+  }
+
+  // dpkg-query format strings are passed as argv, so no shell expansion occurs.
+  const dpkg = tryRun('dpkg-query', ['-W', '-f=${Package} ${Version}\n']);
+  if (dpkg) {
+    for (const line of dpkg.split('\n')) {
+      const fields = line.trim().split(/\s+/);
+      if (fields.length >= 2) {
+        add('APT', fields[0], fields[1]);
+      }
+    }
+  }
+
+  const rpm = tryRun('rpm', ['-qa', '--qf', '%{NAME} %{VERSION}-%{RELEASE}\n']);
+  if (rpm) {
+    for (const line of rpm.split('\n')) {
+      const fields = line.trim().split(/\s+/);
+      if (fields.length >= 2) {
+        add('RPM', fields[0], fields[1]);
+      }
+    }
+  }
+
+  return items;
+}
+
 function collect() {
   const startedAt = new Date();
   const hostname = os.hostname();
@@ -542,6 +656,7 @@ function collect() {
     finishedAt: finishedAt.toISOString(),
     durationMs: finishedAt.getTime() - startedAt.getTime(),
     checks: results,
+    inventory: collectInventory(),
   };
 }
 
@@ -558,6 +673,9 @@ function printReport(report) {
   log(
     `CyberNorf monitor on ${report.hostname}: ${counts.PASS} pass, ${counts.FAIL} fail, ${counts.SKIP} skip`,
   );
+  if (Array.isArray(report.inventory) && report.inventory.length > 0) {
+    log(`  inventory: ${report.inventory.length} packages collected for advisory matching`);
+  }
   for (const check of report.checks) {
     if (check.status === 'FAIL') {
       log(`  FAIL  ${check.id} — ${check.detail ?? check.title}`);
@@ -591,6 +709,22 @@ function loadReport(file) {
     finishedAt:
       typeof parsed.finishedAt === 'string' ? parsed.finishedAt : new Date().toISOString(),
     durationMs: Number.isFinite(parsed.durationMs) ? parsed.durationMs : undefined,
+    inventory: Array.isArray(parsed.inventory)
+      ? parsed.inventory
+          .filter(
+            (item) =>
+              item &&
+              typeof item.ecosystem === 'string' &&
+              item.name &&
+              typeof item.version === 'string',
+          )
+          .slice(0, MAX_INVENTORY_ITEMS)
+          .map((item) => ({
+            ecosystem: item.ecosystem,
+            name: String(item.name),
+            version: String(item.version),
+          }))
+      : [],
     checks: parsed.checks.map((check) => ({
       id: String(check.id ?? ''),
       title: String(check.title ?? ''),
@@ -628,6 +762,9 @@ function payloadOf(report) {
   }
   if (Number.isFinite(report.durationMs)) {
     body.durationMs = report.durationMs;
+  }
+  if (Array.isArray(report.inventory) && report.inventory.length > 0) {
+    body.inventory = report.inventory;
   }
   return body;
 }
@@ -681,7 +818,8 @@ async function submit(report) {
   log(
     `Report accepted: run ${body?.run?.id ?? '(unknown)'} (${body?.counts?.checkCount ?? '?'} checks, ` +
       `${body?.findingsCreated ?? 0} new findings, ${body?.findingsRefreshed ?? 0} refreshed, ` +
-      `${body?.findingsSuppressed ?? 0} already triaged).`,
+      `${body?.findingsSuppressed ?? 0} already triaged, ` +
+      `${body?.inventoryCount ?? 0} packages, ${body?.advisoryMatches ?? 0} advisory matches).`,
   );
   return true;
 }

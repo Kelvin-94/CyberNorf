@@ -6,6 +6,7 @@ import {
   optionalDescription,
   optionalShortText,
 } from './common';
+import { MAX_INVENTORY_ITEMS, softwareItemSchema } from './software';
 
 export const agentSourceSchema = z.enum(AGENT_SOURCES);
 export const agentScopeSchema = z.enum(AGENT_SCOPES);
@@ -95,6 +96,12 @@ export const agentRunReportSchema = z
       .max(24 * 60 * 60 * 1000)
       .optional(),
     checks: z.array(agentCheckSchema).max(MAX_CHECKS_PER_RUN, 'Too many checks in one run.'),
+    // Optional software inventory for the host. It is a snapshot of the last
+    // run, used for advisory matching rather than for posture scoring.
+    inventory: z
+      .array(softwareItemSchema)
+      .max(MAX_INVENTORY_ITEMS, 'Too many packages in one run.')
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -109,6 +116,19 @@ export const agentRunReportSchema = z
         });
       }
       seen.add(key);
+    });
+
+    const packages = new Set<string>();
+    value.inventory?.forEach((item, index) => {
+      const key = `${item.ecosystem}::${item.name.toLowerCase()}`;
+      if (packages.has(key)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['inventory', index, 'name'],
+          message: `Package ${item.name} is listed twice for ${item.ecosystem} in one run.`,
+        });
+      }
+      packages.add(key);
     });
   });
 
