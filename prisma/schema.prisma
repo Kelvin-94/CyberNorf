@@ -214,6 +214,7 @@ model User {
   approvedAgents    Agent[]                 @relation("AgentApprovedBy")
   createdCheckMaps  CheckControlMap[]       @relation("CheckMapCreatedBy")
   createdChannels   NotificationChannel[]   @relation("NotificationChannelCreatedBy")
+  createdAdvisories Advisory[]              @relation("AdvisoryCreatedBy")
 
   @@unique([email])
   @@map("user")
@@ -316,6 +317,8 @@ model Organization {
   checkMaps            CheckControlMap[]
   notificationChannels NotificationChannel[]
   notificationEvents   NotificationEvent[]
+  advisories           Advisory[]
+  softwareItems        SoftwareItem[]
 
   @@map("organizations")
 }
@@ -353,6 +356,7 @@ model Asset {
   createdBy          User                    @relation("AssetCreatedBy", fields: [createdById], references: [id])
   findings           Finding[]
   controlEvidence    ControlEvidence[]
+  softwareItems      SoftwareItem[]
 
   @@unique([organizationId, identifier])
   @@index([organizationId, status])
@@ -582,15 +586,15 @@ model CheckControlMap {
 /// recover a usable credential; the plaintext is shown once at registration
 /// (builtin agents) or approval (every external source).
 model Agent {
-  id                      String       @id @default(cuid())
+  id                      String         @id @default(cuid())
   organizationId          String
   name                    String
   description             String?
   source                  AgentSource
-  status                  AgentStatus  @default(PENDING_APPROVAL)
+  status                  AgentStatus    @default(PENDING_APPROVAL)
   /// Granted scopes from the agent scope catalog; enforced per request.
-  scopes                  String[]     @default([])
-  tokenHash               String?      @unique
+  scopes                  String[]       @default([])
+  tokenHash               String?        @unique
   tokenPrefix             String?
   tokenExpiresAt          DateTime?
   lastSeenAt              DateTime?
@@ -601,18 +605,19 @@ model Agent {
   /// When an offline alert was last queued, so one outage alerts once and a
   /// recovery clears the marker.
   offlineNotifiedAt       DateTime?
-  runCount                Int          @default(0)
+  runCount                Int            @default(0)
   createdById             String
   approvedById            String?
   approvedAt              DateTime?
   revokedAt               DateTime?
-  createdAt               DateTime     @default(now())
-  updatedAt               DateTime     @updatedAt
-  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdBy               User         @relation("AgentCreatedBy", fields: [createdById], references: [id])
-  approvedBy              User?        @relation("AgentApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+  organization            Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy               User           @relation("AgentCreatedBy", fields: [createdById], references: [id])
+  approvedBy              User?          @relation("AgentApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
   runs                    AgentRun[]
   findings                Finding[]
+  softwareItems           SoftwareItem[]
 
   @@unique([organizationId, name])
   @@index([organizationId, status])
@@ -739,4 +744,87 @@ model ApiRateLimit {
   updatedAt   DateTime @updatedAt
 
   @@map("api_rate_limits")
+}
+
+// ---------------------------------------------------------------------------
+// Software inventory and vulnerability advisories
+// ---------------------------------------------------------------------------
+
+/// Package ecosystem (and, for operating systems, the package manager) that an
+/// inventory item or an advisory belongs to. Agents tag what they collect with
+/// one of these values, so matching never relies on naming conventions between
+/// an agent and the platform.
+enum PackageEcosystem {
+  /// Debian/Ubuntu packages reported by dpkg-query.
+  APT
+  /// Red Hat family packages reported by rpm.
+  RPM
+  /// Homebrew formulae and casks.
+  BREW
+  /// npm global packages.
+  NPM
+  /// Python packages from pip.
+  PYPI
+  GO
+  CARGO
+  RUBYGEMS
+  MAVEN
+  NUGET
+  OTHER
+}
+
+/// One advisory the operator imported (CVE, GHSA, vendor bulletin). The platform
+/// never fetches these itself: keeping the fleet offline means the advisory feed
+/// is imported on the operator's schedule from a source they trust.
+model Advisory {
+  id             String           @id @default(cuid())
+  organizationId String
+  /// Advisory identifier as published, e.g. "CVE-2024-3094" or "GHSA-xxxx".
+  identifier     String
+  packageName    String
+  ecosystem      PackageEcosystem
+  summary        String
+  severity       FindingSeverity
+  /// Version range expression evaluated by src/server/domain/versions.ts,
+  /// e.g. ">= 3.0.0, < 3.0.7" or "^1.2.3".
+  affectedRange  String
+  fixedVersion   String?
+  cvssScore      Decimal?         @db.Decimal(3, 1)
+  referenceUrl   String?
+  publishedAt    DateTime?
+  createdById    String
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      User             @relation("AdvisoryCreatedBy", fields: [createdById], references: [id])
+
+  /// One advisory can name several packages; each package is its own row.
+  @@unique([organizationId, identifier, packageName])
+  @@index([organizationId, ecosystem, packageName])
+  @@index([organizationId, identifier])
+  @@map("advisories")
+}
+
+/// A package observed on a host by the last successful agent run. The set is a
+/// snapshot: the run that reports it replaces the previous one so the table
+/// stays bounded and a removed package disappears instead of lingering.
+model SoftwareItem {
+  id             String           @id @default(cuid())
+  organizationId String
+  agentId        String
+  /// Host asset the package was found on, resolved from the run hostname.
+  assetId        String?
+  ecosystem      PackageEcosystem
+  name           String
+  version        String
+  firstSeenAt    DateTime         @default(now())
+  lastSeenAt     DateTime         @default(now())
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  agent          Agent            @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  asset          Asset?           @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@unique([agentId, ecosystem, name])
+  @@index([organizationId, ecosystem, name])
+  @@index([organizationId, assetId])
+  @@map("software_items")
 }

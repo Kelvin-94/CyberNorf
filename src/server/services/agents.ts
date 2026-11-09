@@ -17,6 +17,7 @@ import { deriveAgentHealth, type AgentHealth } from '@/server/domain/notificatio
 import { badRequest, conflict, forbidden, notFound, unauthenticated } from '@/server/errors';
 import { attachMappedEvidence, loadMappedControls } from '@/server/services/check-maps';
 import { agentFingerprint, isUniqueConstraintError } from '@/server/services/shared';
+import { syncInventoryAndMatch } from '@/server/services/software';
 import type {
   AgentHeartbeatInput,
   AgentRunReportInput,
@@ -681,6 +682,10 @@ export interface RecordRunResult {
   findingsSuppressed: number;
   /** Evidence items filed against mapped controls during this run. */
   controlEvidenceAttached: number;
+  /** Packages stored from the inventory snapshot (0 when none was sent). */
+  inventoryCount: number;
+  /** Advisory matches evaluated for this run, whether new or refreshed. */
+  advisoryMatches: number;
 }
 
 /** Statuses where a still-failing check refreshes the existing finding. */
@@ -863,6 +868,129 @@ export async function recordAgentRun(
       }
     }
 
+    // Inventory is optional and additive: a report without it leaves the stored
+    // snapshot untouched, while a report with it replaces the snapshot so an
+    // upgraded or removed package stops matching advisories.
+    let inventoryCount = 0;
+    let advisoryMatches = 0;
+    if (report.inventory !== undefined) {
+      const inventory = await syncInventoryAndMatch(tx, {
+        organizationId: principal.organizationId,
+        agentId: principal.id,
+        createdById: principal.createdById,
+        hostname: report.hostname ?? null,
+        items: report.inventory,
+      });
+      inventoryCount = inventory.inventoryCount;
+
+      if (inventory.assetCreated && inventory.assetId) {
+        await appendAuditEvent(tx, {
+          organizationId: principal.organizationId,
+          actorType: 'AGENT',
+          actorId: null,
+          action: AuditActions.ASSET_CREATED,
+          outcome: 'SUCCESS',
+          targetType: 'asset',
+          targetId: inventory.assetId,
+          summary: `Asset ${report.hostname} discovered by agent "${principal.name}"`,
+          metadata: {
+            source: 'AGENT_INVENTORY',
+            agentId: principal.id,
+            runId: created.id,
+            hostname: report.hostname ?? null,
+          },
+          ipAddress: null,
+          userAgent: null,
+          requestId: null,
+        });
+      }
+
+      for (const draft of inventory.matches) {
+        advisoryMatches += 1;
+        const existingAdvisory = await tx.finding.findFirst({
+          where: { organizationId: principal.organizationId, fingerprint: draft.fingerprint },
+          select: { id: true, status: true },
+        });
+        const description = `${draft.summary} ${draft.packageName} ${draft.installedVersion} installed on ${draft.target} falls inside the affected range ${draft.affectedRange}.`;
+        const remediation = draft.fixedVersion
+          ? `Upgrade ${draft.packageName} to ${draft.fixedVersion} or later.`
+          : `Upgrade ${draft.packageName} to a release outside ${draft.affectedRange}, or remove it.`;
+        const cveId = /^CVE-\d{4}-\d{4,}$/i.test(draft.identifier)
+          ? draft.identifier.toUpperCase()
+          : null;
+
+        if (!existingAdvisory) {
+          const createdFinding = await tx.finding.create({
+            data: {
+              organizationId: principal.organizationId,
+              agentId: principal.id,
+              assetId: draft.assetId,
+              title: `${draft.packageName} ${draft.installedVersion} is affected by ${draft.identifier}`,
+              description,
+              severity: draft.severity,
+              status: 'OPEN',
+              source: 'AGENT',
+              fingerprint: draft.fingerprint,
+              cveId,
+              cvssScore: draft.cvssScore,
+              remediation,
+              createdById: principal.createdById,
+              firstSeenAt: now,
+              lastSeenAt: now,
+            },
+            select: { id: true, title: true },
+          });
+
+          await appendAuditEvent(tx, {
+            organizationId: principal.organizationId,
+            actorType: 'AGENT',
+            actorId: null,
+            action: AuditActions.FINDING_CREATED,
+            outcome: 'SUCCESS',
+            targetType: 'finding',
+            targetId: createdFinding.id,
+            summary: `Finding ${createdFinding.title} raised by agent "${principal.name}"`,
+            metadata: {
+              source: 'AGENT',
+              agentId: principal.id,
+              runId: created.id,
+              advisoryId: draft.advisoryId,
+              advisoryIdentifier: draft.identifier,
+              ecosystem: draft.ecosystem,
+              packageName: draft.packageName,
+              installedVersion: draft.installedVersion,
+              target: draft.target,
+              severity: draft.severity,
+            },
+            ipAddress: null,
+            userAgent: null,
+            requestId: null,
+          });
+
+          findingsCreated += 1;
+          continue;
+        }
+
+        if (OPEN_FINDING_STATUSES.has(existingAdvisory.status)) {
+          await tx.finding.update({
+            where: { id: existingAdvisory.id },
+            data: {
+              lastSeenAt: now,
+              severity: draft.severity,
+              description,
+              remediation,
+              cvssScore: draft.cvssScore,
+              ...(draft.assetId ? { asset: { connect: { id: draft.assetId } } } : {}),
+              agent: { connect: { id: principal.id } },
+            },
+          });
+          findingsRefreshed += 1;
+        } else {
+          findingsSuppressed += 1;
+        }
+      }
+    }
+
     const run = await tx.agentRun.update({
       where: { id: created.id },
       data: { findingsCreated, findingsRefreshed },
@@ -894,6 +1022,8 @@ export async function recordAgentRun(
         findingsRefreshed,
         findingsSuppressed,
         controlEvidenceAttached,
+        inventoryCount,
+        advisoryMatches,
       },
       ipAddress: null,
       userAgent: null,
@@ -906,6 +1036,8 @@ export async function recordAgentRun(
       findingsRefreshed,
       findingsSuppressed,
       controlEvidenceAttached,
+      inventoryCount,
+      advisoryMatches,
     };
   });
 
@@ -916,6 +1048,8 @@ export async function recordAgentRun(
     findingsRefreshed: result.findingsRefreshed,
     findingsSuppressed: result.findingsSuppressed,
     controlEvidenceAttached: result.controlEvidenceAttached,
+    inventoryCount: result.inventoryCount,
+    advisoryMatches: result.advisoryMatches,
   };
 }
 

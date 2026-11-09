@@ -40,6 +40,8 @@ export const AuditActions = {
   NOTIFICATION_CHANNEL_CREATED: 'notification.channel_created',
   NOTIFICATION_CHANNEL_DELETED: 'notification.channel_deleted',
   NOTIFICATION_TEST_SENT: 'notification.test_sent',
+  ADVISORY_IMPORTED: 'advisory.imported',
+  ADVISORY_DELETED: 'advisory.deleted',
   ACCESS_DENIED: 'access.denied',
 } as const;
 

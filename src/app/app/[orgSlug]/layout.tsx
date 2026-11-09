@@ -19,6 +19,7 @@ const NAV_ITEMS: Array<{
   { href: '', label: 'Dashboard', group: 'Investigate', capability: 'organization.read' },
   { href: '/assets', label: 'Assets', group: 'Investigate', capability: 'asset.read' },
   { href: '/findings', label: 'Findings', group: 'Investigate', capability: 'finding.read' },
+  { href: '/advisories', label: 'Advisories', group: 'Investigate', capability: 'advisory.read' },
   { href: '/incidents', label: 'Incidents', group: 'Investigate', capability: 'incident.read' },
   { href: '/agents', label: 'Agents', group: 'Govern', capability: 'agent.read' },
   { href: '/compliance', label: 'Compliance', group: 'Govern', capability: 'compliance.read' },

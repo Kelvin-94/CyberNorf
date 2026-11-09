@@ -36,6 +36,8 @@ export const CAPABILITIES = [
   'agent.manage',
   'notification.read',
   'notification.manage',
+  'advisory.read',
+  'advisory.manage',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -59,6 +61,7 @@ export const MUTATING_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability
   'compliance.manage',
   'agent.manage',
   'notification.manage',
+  'advisory.manage',
 ]);
 
 const READ_ONLY_CAPABILITIES: readonly Capability[] = [
@@ -70,6 +73,7 @@ const READ_ONLY_CAPABILITIES: readonly Capability[] = [
   'compliance.read',
   'agent.read',
   'notification.read',
+  'advisory.read',
 ];
 
 const ANALYST_CAPABILITIES: readonly Capability[] = [
@@ -100,6 +104,9 @@ const ADMIN_CAPABILITIES: readonly Capability[] = [
   // Alert destinations receive organization telemetry, so analysts and viewers
   // can read the delivery log but only administrators can add or remove a URL.
   'notification.manage',
+  // An advisory feed decides which hosts are reported as vulnerable, so the
+  // whole organization can read it but only administrators can replace it.
+  'advisory.manage',
 ];
 
 export const ROLE_CAPABILITIES: Readonly<Record<OrgRole, ReadonlySet<Capability>>> = {

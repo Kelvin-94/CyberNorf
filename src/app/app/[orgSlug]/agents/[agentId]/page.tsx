@@ -10,6 +10,8 @@ import { can } from '@/server/authz/roles';
 import { canTransitionAgent, AGENT_SCOPE_DETAILS, AGENT_SCOPES } from '@/server/domain/agents';
 import { getAgentDetail } from '@/server/services/agents';
 import { listCheckMaps } from '@/server/services/check-maps';
+import { listAgentInventory } from '@/server/services/software';
+import { packageEcosystemLabel } from '@/server/domain/software';
 import { loadTenantContext } from '@/server/ui/session';
 
 export const metadata: Metadata = { title: 'Agent · CyberNorf' };
@@ -37,9 +39,10 @@ export default async function AgentDetailPage({
     notFound();
   }
 
-  const [detail, mapping] = await Promise.all([
+  const [detail, mapping, inventory] = await Promise.all([
     getAgentDetail(ctx, agentId),
     listCheckMaps(ctx, agentId),
+    listAgentInventory(ctx, agentId),
   ]);
   const base = `/app/${ctx.organization.slug}`;
   const agent = detail.agent;
@@ -337,6 +340,59 @@ export default async function AgentDetailPage({
               })}
             </tbody>
           </table>
+        )}
+      </section>
+
+      <section className="card" style={{ marginTop: '1.5rem' }}>
+        <h2>Software inventory</h2>
+        {inventory.items.length === 0 ? (
+          <p className="small muted">
+            This agent has not reported packages yet. Run{' '}
+            <span className="mono">scripts/agent/monitor.mjs</span> on the host: it collects
+            Homebrew, npm global, pip, dpkg and rpm packages, and the platform matches them against
+            the imported advisory feed.
+          </p>
+        ) : (
+          <>
+            <p className="small muted">
+              {inventory.total} package{inventory.total === 1 ? '' : 's'} from the last inventory
+              snapshot, {inventory.items.filter((item) => item.affectedBy.length > 0).length}{' '}
+              covered by an imported advisory.
+            </p>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Package</th>
+                  <th>Version</th>
+                  <th>Source</th>
+                  <th>Advisories</th>
+                  <th>Last seen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {inventory.items.slice(0, 200).map((item) => (
+                  <tr key={item.id}>
+                    <td className="mono">{item.name}</td>
+                    <td className="mono small">{item.version}</td>
+                    <td className="small">{packageEcosystemLabel(item.ecosystem)}</td>
+                    <td className="small">
+                      {item.affectedBy.length === 0 ? (
+                        <span className="muted">—</span>
+                      ) : (
+                        item.affectedBy.join(', ')
+                      )}
+                    </td>
+                    <td className="small">{formatTimestamp(item.lastSeenAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {inventory.items.length > 200 ? (
+              <p className="small muted">
+                Showing the first 200 of {inventory.items.length} packages.
+              </p>
+            ) : null}
+          </>
         )}
       </section>
 

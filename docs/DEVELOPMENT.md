@@ -230,6 +230,47 @@ curl -fsS -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron
 
 It answers `503` when `CRON_SECRET` is unset or shorter than 24 characters, and `401` for a wrong token, so a deployment that forgets the variable cannot be triggered by anyone who finds the route. Run it every minute from cron, a systemd timer, or a platform scheduler. The response reports how many agents were checked, how many went offline or recovered, how many alerts were queued, and the delivery counts.
 
+### Software inventory and advisories
+
+A run may also carry the packages the host has installed (`inventory`, at most 800 entries). The server resolves the report hostname to a tenant asset, creating a `HOSTNAME` asset the first time a host reports, and replaces that agent's snapshot with the list, so a package that was uninstalled stops counting. The agent detail page shows the snapshot under **Software inventory**, annotated with the advisories that match.
+
+Advisories are imported per tenant; there is no cloud feed and nothing is fetched from the Internet:
+
+```sh
+curl -fsS -X POST https://cybernorf.example/api/v1/organizations/acme/advisories \
+  -H 'content-type: application/json' --cookie "$SESSION" \
+  -d '{"advisories": [{
+        "identifier": "CVE-2024-21538",
+        "packageName": "cross-spawn",
+        "ecosystem": "NPM",
+        "summary": "ReDoS when parsing a crafted argument",
+        "severity": "HIGH",
+        "affectedRange": ">= 7.0.0, < 7.0.5",
+        "fixedVersion": "7.0.5",
+        "cvssScore": 7.5,
+        "referenceUrl": "https://nvd.nist.gov/vuln/detail/CVE-2024-21538"
+      }]}'
+```
+
+The console page `/app/:orgSlug/advisories` accepts either that object or a bare JSON array, shows the current feed, and can delete an entry. Importing is idempotent per identifier and package name: a re-import updates the existing row and reports it as updated instead of creating a duplicate, and the whole batch is rejected when the same pair appears twice. At most 500 advisories are accepted per request.
+
+| Method and path          | Capability        | Purpose                                               |
+| ------------------------ | ----------------- | ----------------------------------------------------- |
+| `GET /advisories`        | `advisory.read`   | Feed list, filtered by search text and ecosystem.     |
+| `POST /advisories`       | `advisory.manage` | Import or update a batch; audits `advisory.imported`. |
+| `DELETE /advisories/:id` | `advisory.manage` | Remove one entry; audits `advisory.deleted`.          |
+
+`affectedRange` uses npm range syntax (`>= 1.2.0, < 1.2.9`, `^2.0.0`, `1.x`, `1.2.3 - 1.4.0`, `1.2.3 || 2.0.0`) and is validated with the same parser the matcher uses, so a range that cannot be read is rejected instead of being stored as "affects nothing". Debian and RPM version quirks beyond a leading epoch and a package revision, such as `~` ordering, are compared with the general rules; a range that omits the suffix still matches on the numeric release.
+
+Matching happens when a run arrives, not when an advisory is imported:
+
+- A package matches when the ecosystem is identical and the name matches case-insensitively, and `affectedRange` contains the reported version.
+- Each match creates one finding per advisory and host, titled `<package> <version> is affected by <identifier>`, with `source = AGENT`, the advisory severity, the CVSS score, the host asset, and remediation naming the fixed version. `cveId` is filled only when the identifier looks like a CVE.
+- A later run that still matches refreshes the same finding instead of creating a second one; a finding a person resolved, accepted, or marked a false positive is left closed.
+- `finding.created` records the advisory identifier, package, ecosystem, installed version, agent, and run. A host discovered by an inventory report also audits `asset.created`.
+
+To pick up an advisory published after the last run, run the monitor again on that host.
+
 ### Scheduling and rotation
 
 CyberNorf never initiates a scan, so schedule the monitor on the host itself, for example a `launchd` agent on macOS, a systemd timer on Linux, or a weekly cron entry on a hardened jump host. Tokens cannot be rotated in place: revoke the agent, register a replacement, and update the host's environment. Suspension is the reversible option when a host is being rebuilt.
@@ -243,6 +284,7 @@ CyberNorf never initiates a scan, so schedule the monitor on the host itself, fo
 5. Approve it as the owner (optionally narrowing scopes) and copy the token from the reveal; then suspend, resume, and revoke it from the detail page.
 6. Adopt a framework, then map the failing check on the agent page to a control; run the monitor again and open the control to see the evidence filed by the agent.
 7. On `/app/:orgSlug/settings`, add an alert destination pointing at a receiver that prints the signature headers, send a test, then set the agent's expected interval to 5 minutes, stop running the monitor, and watch the sweep raise `AGENT_OFFLINE` (see below).
+8. Open `/app/:orgSlug/advisories`, insert the sample entry, and run the monitor again: the installed package appears under **Software inventory** on the agent page with the matching identifier, and the findings list gains `<package> <version> is affected by <identifier>` linked to the host asset.
 
 After adding a migration, apply it to the test database before running the suite:
 
@@ -301,13 +343,15 @@ The build requires `BETTER_AUTH_SECRET` to be a valid 32+ character value when `
 
 ## Troubleshooting
 
-| Symptom                                              | Likely cause and fix                                                                                                                                      |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docker compose up` fails: port already allocated    | Another PostgreSQL is running on 5432. Set `POSTGRES_HOST_PORT` to a free port and update `DATABASE_URL`.                                                 |
-| Prisma `P1001`                                       | Wrong host or port. Try `127.0.0.1` instead of `localhost`; check `docker compose ps`.                                                                    |
-| Tests abort with "refusing to run against ..."       | `DATABASE_URL` in `.env.test` does not point at a database whose name contains `test`.                                                                    |
-| `403 MFA_REQUIRED` on every create/update            | The signed-in `OWNER` or `ADMIN` has not enrolled TOTP. Open `/account/security`.                                                                         |
-| `403 Cross-site requests are not allowed`            | `BETTER_AUTH_URL` does not match the origin in the browser address bar.                                                                                   |
-| Production start logs `Failed to prepare server`     | `BETTER_AUTH_URL` is not `https://` for a non-loopback host, or `DATABASE_URL` points at a remote database without `sslmode`. Fix the URL, not the check. |
-| Prisma "Failed to deserialize column of type 'void'" | A raw query selected a `void` function result. Wrap advisory-lock calls in a subquery that returns a normal column.                                       |
-| Audit verification reports `hash_mismatch`           | An audit row changed outside the application. The trigger blocks the normal path, so investigate direct database access; do not "repair" the row.         |
+| Symptom                                              | Likely cause and fix                                                                                                                                                                                |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker compose up` fails: port already allocated    | Another PostgreSQL is running on 5432. Set `POSTGRES_HOST_PORT` to a free port and update `DATABASE_URL`.                                                                                           |
+| Prisma `P1001`                                       | Wrong host or port. Try `127.0.0.1` instead of `localhost`; check `docker compose ps`.                                                                                                              |
+| Tests abort with "refusing to run against ..."       | `DATABASE_URL` in `.env.test` does not point at a database whose name contains `test`.                                                                                                              |
+| `403 MFA_REQUIRED` on every create/update            | The signed-in `OWNER` or `ADMIN` has not enrolled TOTP. Open `/account/security`.                                                                                                                   |
+| `403 Cross-site requests are not allowed`            | `BETTER_AUTH_URL` does not match the origin in the browser address bar.                                                                                                                             |
+| Production start logs `Failed to prepare server`     | `BETTER_AUTH_URL` is not `https://` for a non-loopback host, or `DATABASE_URL` points at a remote database without `sslmode`. Fix the URL, not the check.                                           |
+| Prisma "Failed to deserialize column of type 'void'" | A raw query selected a `void` function result. Wrap advisory-lock calls in a subquery that returns a normal column.                                                                                 |
+| An advisory matches no host                          | The ecosystem must be identical and the name must match the reported spelling; the version must fall inside `affectedRange`. Import does not scan retroactively: run the monitor on the host again. |
+| `422` importing advisories                           | The body must be `{ "advisories": [...] }` with `identifier`, `packageName`, `ecosystem`, `summary`, `severity`, and a readable `affectedRange`; the console page also accepts a bare array.        |
+| Audit verification reports `hash_mismatch`           | An audit row changed outside the application. The trigger blocks the normal path, so investigate direct database access; do not "repair" the row.                                                   |

@@ -45,6 +45,31 @@ export function agentFingerprint(organizationId: string, checkId: string, target
     .digest('hex');
 }
 
+/**
+ * Stable identity for a vulnerability raised by advisory matching. The advisory
+ * identifier, the package and the host form the identity, so the same host
+ * reported twice refreshes one finding and an installed upgrade stops matching
+ * instead of leaving a duplicate behind.
+ */
+export function advisoryFingerprint(
+  organizationId: string,
+  identifier: string,
+  packageName: string,
+  target: string,
+): string {
+  return createHash('sha256')
+    .update(
+      [
+        organizationId,
+        'advisory',
+        identifier.trim().toLowerCase(),
+        packageName.trim().toLowerCase(),
+        target.trim().toLowerCase(),
+      ].join('|'),
+    )
+    .digest('hex');
+}
+
 export async function assertAssetInOrganization(
   organizationId: string,
   assetId: string | null | undefined,
