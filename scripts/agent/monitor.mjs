@@ -103,6 +103,26 @@ function tryRun(command, args = [], timeout = COMMAND_TIMEOUT_MS) {
 
 const isMac = process.platform === 'darwin';
 const isLinux = process.platform === 'linux';
+const isWindows = process.platform === 'win32';
+
+/**
+ * Runs an inline PowerShell script and returns trimmed stdout, or null.
+ *
+ * Windows exposes no POSIX tooling for the state the checks need, so those
+ * checks read native interfaces through PowerShell. The script is passed as a
+ * single argv entry with no shell involved, so its quoting reaches PowerShell
+ * verbatim. Like run(), this never touches the network.
+ */
+function powershell(script) {
+  const output = tryRun('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script]);
+  return output === null ? null : output.trim();
+}
+
+/** Reads a `key=value` token from one-line PowerShell output. */
+function psField(output, key) {
+  const match = new RegExp(`(?:^|\\s)${key}=(\\S*)`).exec(output);
+  return match ? match[1] : null;
+}
 
 function pass(detail, remediation = null) {
   return { status: 'PASS', detail, remediation };
@@ -508,6 +528,205 @@ const checks = [
         return skip('lsof reported no listening TCP sockets.');
       }
       return pass(`No risky ports among ${listening.size} listening TCP socket(s).`);
+    },
+  },
+  {
+    id: 'defender.realtime-protection',
+    title: 'Windows Defender real-time protection',
+    findingTitle: 'Defender real-time protection is disabled',
+    severity: 'HIGH',
+    remediation:
+      'Re-enable real-time protection (Set-MpPreference -DisableRealtimeMonitoring $false) and remove any policy or third-party antivirus that disables it.',
+    run() {
+      if (!isWindows) {
+        return skip('Defender check is Windows-specific.');
+      }
+      const output = powershell(
+        '$s = Get-MpComputerStatus; "realtime=$($s.RealTimeProtectionEnabled) service=$($s.AMServiceEnabled)"',
+      );
+      if (output === null) {
+        return skip(
+          'Windows Defender status could not be read (cmdlet unavailable or access denied).',
+        );
+      }
+      const realtime = psField(output, 'realtime');
+      const service = psField(output, 'service');
+      if (!realtime) {
+        return skip('Windows Defender did not report its real-time protection state.');
+      }
+      if (realtime.toLowerCase() === 'false' || service?.toLowerCase() === 'false') {
+        return fail(
+          `realtime=${realtime} service=${service ?? 'unknown'}`,
+          'Malware runs uninspected while real-time protection or the antivirus service is off.',
+        );
+      }
+      return pass(`realtime=${realtime} service=${service ?? 'unknown'}`);
+    },
+  },
+  {
+    id: 'defender.signature-age',
+    title: 'Antivirus signature age',
+    findingTitle: 'Antivirus signatures are stale',
+    severity: 'MEDIUM',
+    remediation:
+      'Refresh signatures (Update-MpSignature) and confirm Windows Update is not blocked, so definitions stay under a few days old.',
+    run() {
+      if (!isWindows) {
+        return skip('Defender check is Windows-specific.');
+      }
+      const output = powershell('$s = Get-MpComputerStatus; "age=$($s.AntivirusSignatureAge)"');
+      if (output === null) {
+        return skip('Antivirus signature age could not be read.');
+      }
+      const raw = psField(output, 'age');
+      const age = raw === null ? Number.NaN : Number.parseInt(raw, 10);
+      if (!Number.isFinite(age)) {
+        return skip('Antivirus signature age was not reported.');
+      }
+      if (age > 3) {
+        return fail(
+          `Antivirus signature age: ${age} day(s)`,
+          'Stale signatures miss recently published malware; definitions are normally updated daily.',
+        );
+      }
+      return pass(`Antivirus signature age: ${age} day(s)`);
+    },
+  },
+  {
+    id: 'access.smbv1',
+    title: 'SMBv1 server protocol',
+    findingTitle: 'SMBv1 is enabled',
+    severity: 'HIGH',
+    remediation:
+      'Disable SMBv1 (Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force) unless a legacy device genuinely requires it.',
+    run() {
+      if (!isWindows) {
+        return skip('SMBv1 check is Windows-specific.');
+      }
+      const output = powershell('$c = Get-SmbServerConfiguration; "smb1=$($c.EnableSMB1Protocol)"');
+      if (output === null) {
+        return skip('SMB server configuration could not be read.');
+      }
+      const smb1 = psField(output, 'smb1');
+      if (smb1?.toLowerCase() === 'true') {
+        return fail(
+          'EnableSMB1Protocol=True',
+          'SMBv1 is exploited by self-propagating worms such as WannaCry and EternalBlue tooling.',
+        );
+      }
+      if (smb1?.toLowerCase() === 'false') {
+        return pass('EnableSMB1Protocol=False');
+      }
+      return skip('SMBv1 state was not reported.');
+    },
+  },
+  {
+    id: 'auth.rdp-network-level-authentication',
+    title: 'Remote Desktop network-level authentication',
+    findingTitle: 'RDP is reachable without network-level authentication',
+    severity: 'MEDIUM',
+    remediation:
+      'Set UserAuthentication=1 on the RDP-Tcp listener, or disable Remote Desktop (fDenyTSConnections=1) if it is not needed.',
+    run() {
+      if (!isWindows) {
+        return skip('Remote Desktop check is Windows-specific.');
+      }
+      const output = powershell(
+        '$ts = Get-ItemProperty "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server" -Name fDenyTSConnections -ErrorAction Stop; ' +
+          '$nla = Get-ItemProperty "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp" -Name UserAuthentication -ErrorAction SilentlyContinue; ' +
+          '"deny=$($ts.fDenyTSConnections) nla=$($nla.UserAuthentication)"',
+      );
+      if (output === null) {
+        return skip('Remote Desktop configuration could not be read.');
+      }
+      const deny = psField(output, 'deny');
+      const nla = psField(output, 'nla');
+      if (deny === '1') {
+        return pass('fDenyTSConnections=1 (Remote Desktop is disabled)');
+      }
+      if (nla === null || nla === '') {
+        return skip(
+          'UserAuthentication is not set; network-level authentication could not be confirmed.',
+        );
+      }
+      if (/^(0|false)$/i.test(nla)) {
+        return fail(
+          `fDenyTSConnections=${deny ?? 'unknown'} UserAuthentication=${nla}`,
+          'Without NLA the logon prompt is reachable before authentication, which enables password spraying and pre-auth exploits.',
+        );
+      }
+      return pass(`fDenyTSConnections=${deny ?? 'unknown'} UserAuthentication=${nla}`);
+    },
+  },
+  {
+    id: 'access.windows-guest-account',
+    title: 'Windows guest account',
+    findingTitle: 'Guest account is enabled',
+    severity: 'MEDIUM',
+    remediation: 'Disable the built-in Guest account (Disable-LocalUser -Name Guest).',
+    run() {
+      if (!isWindows) {
+        return skip('Guest account check is Windows-specific.');
+      }
+      const output = powershell(
+        '$g = Get-LocalUser -Name Guest -ErrorAction SilentlyContinue; if ($null -eq $g) { "guest=absent" } else { "guest=$($g.Enabled)" }',
+      );
+      if (output === null) {
+        return skip('Local accounts could not be read.');
+      }
+      const state = psField(output, 'guest');
+      if (state?.toLowerCase() === 'true') {
+        return fail(
+          'Guest account enabled',
+          'An enabled guest account allows unauthenticated local sessions with a blank password.',
+        );
+      }
+      if (state?.toLowerCase() === 'false') {
+        return pass('Guest account is present but disabled.');
+      }
+      if (state === 'absent' || state?.toLowerCase() === 'notfound') {
+        return pass('Guest account is not present.');
+      }
+      return skip('Guest account state was not reported.');
+    },
+  },
+  {
+    id: 'patch.windows-update-age',
+    title: 'Windows update recency',
+    findingTitle: 'No Windows update in the last 45 days',
+    severity: 'MEDIUM',
+    remediation:
+      'Apply pending updates (Windows Update or sconfig) so the host is not missing recently fixed vulnerabilities.',
+    run() {
+      if (!isWindows) {
+        return skip('Windows update check is Windows-specific.');
+      }
+      // Get-HotFix only lists QFE packages, so a patch applied purely through a
+      // cumulative update may not appear. The check therefore reports the age of
+      // the newest visible package and skips rather than guessing when none is.
+      const output = powershell(
+        '$h = Get-HotFix -ErrorAction SilentlyContinue | Where-Object { $_.InstalledOn } | Sort-Object InstalledOn -Descending | Select-Object -First 1; ' +
+          'if ($null -eq $h) { "hotfix=none" } else { "hotfix=$($h.HotFixID) days=$((New-TimeSpan -Start $h.InstalledOn -End (Get-Date)).Days)" }',
+      );
+      if (output === null) {
+        return skip('Installed updates could not be listed.');
+      }
+      const hotfix = psField(output, 'hotfix');
+      if (hotfix === 'none') {
+        return skip('Get-HotFix reported no installed package; update age is unknown.');
+      }
+      const raw = psField(output, 'days');
+      const days = raw === null ? Number.NaN : Number.parseInt(raw, 10);
+      if (!Number.isFinite(days)) {
+        return skip('Installed update date could not be parsed.');
+      }
+      if (days > 45) {
+        return fail(
+          `Newest installed package ${hotfix ?? 'unknown'} is ${days} day(s) old`,
+          'Patch gaps beyond 45 days leave publicly known vulnerabilities exploitable.',
+        );
+      }
+      return pass(`Newest installed package ${hotfix ?? 'unknown'} is ${days} day(s) old`);
     },
   },
 ];
