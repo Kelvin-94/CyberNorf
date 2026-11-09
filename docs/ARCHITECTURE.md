@@ -16,6 +16,7 @@
 | Area                                                          | Location                                                     |
 | ------------------------------------------------------------- | ------------------------------------------------------------ |
 | Identity provider (Better Auth) and auth HTTP surface         | `src/lib/auth.ts`, `src/app/api/auth/[...all]/route.ts`      |
+| Optional OIDC single sign-on settings                         | `src/server/auth/oidc.ts`                                    |
 | Browser auth client                                           | `src/lib/auth-client.ts`, `src/lib/api-client.ts`            |
 | Server-rendered session helpers                               | `src/server/ui/session.ts`                                   |
 | Capability policy                                             | `src/server/authz/roles.ts`                                  |
@@ -147,7 +148,7 @@ Operational history is separated from business records. An operator-run CLI (`np
 
 ### UI surfaces
 
-- Public: landing page, `sign-in`, `sign-up`, `two-factor` challenge.
+- Public: landing page, `sign-in` (including a "Continue with …" button when OIDC single sign-on is configured), `sign-up`, `two-factor` challenge.
 - Account: `account/security` for TOTP enrollment and backup codes, and for creating, listing, and revoking personal API keys with a one-time reveal.
 - Tenant workspace under `/app/:orgSlug`: dashboard, assets (list and detail), findings (list, detail, status control, JSON import), incidents (list, detail, notes, linked findings), compliance (posture overview, framework detail with attestations, control detail with evidence), agents (list with derived health, registration with one-time token reveal, detail with approval, lifecycle controls, heartbeat interval, compliance mapping, software inventory, run drill-down), advisories (import form with a sample entry, feed table, delete), audit (filters and chain verification), members, and settings (organization profile and alert destinations with a recent-delivery table).
 - Navigation renders only capabilities the current membership holds, but enforcement always happens on the server.
@@ -167,6 +168,7 @@ Operational history is separated from business records. An operator-run CLI (`np
 - Advisory matching compares exact package names within one ecosystem. It does not resolve dependency trees, distributions that rename packages, or kernel and driver versions, and a range that cannot be parsed matches nothing rather than everything.
 - The monitor collects `brew list --versions`, `npm ls -g --json`, `pip list`, `dpkg-query`, and `rpm -qa`. macOS applications installed as `.app` bundles (`pkgutil --pkgs`) are not collected, and the report is capped at 800 packages.
 - Webhook delivery has no dead-letter review UI beyond the recent-delivery table, and a destination whose signing secret is lost (for example after replacing `BETTER_AUTH_SECRET`) must be deleted and re-created.
+- Single sign-on is one OpenID Connect provider configured through `OIDC_*` variables: no SAML, no multiple simultaneous providers, no SCIM. Provisioning is automatic on first verified sign-in, but de-provisioning is manual, so disabling a person at the identity provider does not end their CyberNorf sessions or memberships.
 - Personal API keys carry no scopes beyond the owner's live role, no IP allowlist, and no rotation schedule or expiry reminder. A key is a single-organization credential created only from the account settings page; it cannot mint another key, and revoking it is immediate with no overlap window.
 
 ## Target logical components (later phases)

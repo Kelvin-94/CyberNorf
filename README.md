@@ -55,7 +55,7 @@ Do not execute untrusted files or active security tests on the application host.
 
 ### What works today
 
-- **Accounts:** email and password registration and sign-in (12-character minimum passwords), eight-hour sliding sessions, sign-out, and TOTP enrollment with ten backup codes at `/account/security`.
+- **Accounts:** email and password registration and sign-in (12-character minimum passwords), optional OpenID Connect single sign-on, eight-hour sliding sessions, sign-out, and TOTP enrollment with ten backup codes at `/account/security`.
 - **Organizations:** create an organization, switch between organizations you belong to, and manage members and roles.
 - **Assets:** register, edit, retire, and inspect organization-owned assets with type, identifier, criticality, and lifecycle status.
 - **Findings:** create findings manually or import them as JSON, deduplicate by fingerprint, move them through the documented lifecycle, assign them, and record remediation.
@@ -83,7 +83,8 @@ See [the local development guide](docs/DEVELOPMENT.md) for setup, test-database 
 
 ### Known limitations
 
-- No password reset, email verification, invitation email, or SSO. An owner or administrator must add an already-registered account by email.
+- No password reset, email verification, or invitation email. An owner or administrator must add an already-registered account by email.
+- SSO is a single OpenID Connect provider enabled through `OIDC_*` variables: no SAML, no SCIM, and no automatic de-provisioning when someone leaves the identity provider.
 - No file uploads or evidence attachments.
 - No background worker is bundled: a cron job or systemd timer calls the alert sweep, and the retention and export scripts are run by an operator.
 - The audit chain is hash-linked but not signed, and depends on restricting direct database access.

@@ -101,6 +101,29 @@ The `migrate` service runs again before the new app container starts. To roll ba
 
 **Stopping.** `docker compose -f compose.prod.yaml down` keeps the volumes. Adding `-v` deletes the database, the generated certificate and the ACME state.
 
+## Single sign-on
+
+The stack ships with password sign-in and can additionally delegate authentication to an OpenID Connect provider. Nothing changes in `compose.prod.yaml`: set the variables in `.env.production` and restart the app container.
+
+1. At the provider, register a confidential web application with the redirect URI `https://<CYBERNORF_DOMAIN>/api/auth/callback/oidc` and the authorization-code grant with PKCE. It must return `email` and `email_verified` claims.
+2. Fill in `.env.production`:
+
+   ```sh
+   OIDC_ISSUER=https://idp.example.com
+   OIDC_CLIENT_ID=cybernorf
+   OIDC_CLIENT_SECRET=...
+   OIDC_DISPLAY_NAME="Acme SSO"     # optional, button label
+   ```
+
+3. `docker compose -f compose.prod.yaml --env-file .env.production up -d app` and confirm the sign-in page shows "Continue with Acme SSO" next to the password form.
+
+Notes that matter during an incident:
+
+- Set all three of `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`, or none. A partial set stops the app at startup instead of serving a login method the operator did not intend.
+- Discovery (`<issuer>/.well-known/openid-configuration`) is fetched by the app, so the container needs egress to the provider. The `edge` network the app shares with the proxy provides it; the `backend` network stays internal. If the provider is down when the app starts, SSO is unavailable until the next sign-in attempt retries discovery; passwords still work.
+- An IdP user whose verified email matches an existing CyberNorf account is signed in as that account, with its existing memberships. Unverified addresses are refused, and no role or organization is ever taken from a token claim.
+- Removing a user from the provider does not remove the CyberNorf account or its sessions. Deactivate the membership in the console as well.
+
 ## Managed database instead of the bundled one
 
 Point `DATABASE_URL` at the provider's host with `sslmode=verify-full` and `sslrootcert` set to their CA bundle, then remove the `database` service and the `database-tls` mounts from `app` and `migrate`. The app's startup check requires TLS for any non-loopback database host, so it will refuse to boot on a plaintext connection.

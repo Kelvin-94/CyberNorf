@@ -473,6 +473,20 @@ button:disabled {
   letter-spacing: -0.03em;
 }
 
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
 pre.code-block {
   overflow-x: auto;
   padding: 0.8rem;
