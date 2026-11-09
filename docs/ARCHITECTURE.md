@@ -140,6 +140,10 @@ Agents collect host evidence and submit it to CyberNorf. The platform never call
 
 Appends are transactional with the mutation, have a per-organization advisory lock, and are chained with SHA-256 over a canonical serialization (`sequence`, previous hash, actor, action, outcome, target, summary, metadata, timestamp). A database trigger rejects `UPDATE` and `DELETE`. `GET /api/v1/organizations/:orgSlug/audit/verify` recomputes the chain and reports the first broken sequence; the audit page exposes the same check.
 
+### Data lifecycle
+
+Operational history is separated from business records. An operator-run CLI (`npm run data:retention`) purges only derived history — agent runs, terminal alert deliveries, and package snapshots whose agent stopped reporting — after a configurable number of days, and appends one `retention.purged` audit event carrying the cutoff and the row counts. Findings, incidents, assets, compliance evidence, and audit events are never removed by a timer: closing them is a human decision, and the audit chain is append-only by trigger. `npm run data:export` writes one organization's records to a JSON document whose select lists omit every credential (agent token hash and prefix, sealed webhook secret, sessions, password hashes, second-factor secrets) while keeping the audit chain's hashes so the file verifies on its own. Neither script runs on a scheduler; deployments wire them into cron or a systemd timer.
+
 ### UI surfaces
 
 - Public: landing page, `sign-in`, `sign-up`, `two-factor` challenge.
@@ -151,8 +155,8 @@ Appends are transactional with the mutation, have a per-organization advisory lo
 
 - No CSP or document-level security headers; the headers listed above apply to API responses.
 - No password reset, email verification, or invitation email flow. People must register before an owner or administrator can add them.
-- No file upload or export. Compliance evidence links to existing findings, incidents, and assets, or to an external reference string; documents are not stored.
-- Rate-limit counters are not garbage collected.
+- No file upload. Data leaves through `npm run data:export` (a per-organization JSON file, no credentials) rather than a console download. Compliance evidence links to existing findings, incidents, and assets, or to an external reference string; documents are not stored.
+- Rate-limit windows and derived history are pruned only by the operator-run `npm run data:retention`, never by a scheduler. That purge cannot remove audit events, and deleting a finding in the console still cascades to its `ControlEvidence` rows, so evidence must be exported first if it matters.
 - The audit chain is hash-linked but not signed.
 - No in-process background worker or job queue. Agents run on their own schedule (cron, `launchd`, Task Scheduler), and the platform never initiates a scan. Offline detection and webhook delivery depend on an external scheduler calling `/api/cron/notifications`; with no scheduler configured, alerts queue but are not retried.
 - Token rotation is manual and per agent: there is no rotation schedule, no overlap window (the previous token stops working immediately), and no alert when a token is about to expire.

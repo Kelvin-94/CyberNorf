@@ -332,6 +332,26 @@ The body must be signed before it is sent and must not be re-serialized afterwar
 7. On `/app/:orgSlug/settings`, add an alert destination pointing at a receiver that prints the signature headers, send a test, then set the agent's expected interval to 5 minutes, stop running the monitor, and watch the sweep raise `AGENT_OFFLINE` (see below).
 8. Rotate the builtin agent's token from the detail page, copy the new value into `CYBERNORF_AGENT_TOKEN`, and run the monitor again: the run is accepted and the old token returns 401.
 9. Open `/app/:orgSlug/advisories`, insert the sample entry, and run the monitor again: the installed package appears under **Software inventory** on the agent page with the matching identifier, and the findings list gains `<package> <version> is affected by <identifier>` linked to the host asset.
+10. Run `npm run data:retention -- --org :orgSlug --days 30` for a dry run, then add `--apply`; the audit page gains a `retention.purged` entry with the counts. Run `npm run data:export -- --org :orgSlug --out /tmp/:orgSlug.json` and confirm the file holds findings and the audit chain but no agent token material.
+
+## Data retention and export
+
+Two operator-run scripts cover the data lifecycle. Both load `.env`, so they talk to whatever database that file names; run them from a host that can reach Postgres.
+
+| Command                                                           | Effect                                                                    |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `npm run data:retention -- --days 90`                             | Dry run: prints what a 90-day policy would remove, for every organization |
+| `npm run data:retention -- --org acme --days 90 --apply`          | Deletes that history for one organization and appends `retention.purged`  |
+| `npm run data:retention -- --days 90 --apply --prune-rate-limits` | Also removes rate-limit windows untouched for 24 hours                    |
+| `npm run data:export -- --org acme --out acme.json`               | Writes one organization's records to a JSON file (mode `0600`)            |
+
+`--org` accepts a slug or an id. Retention is deliberately narrow: it removes **agent runs**, **terminal alert deliveries** (`SENT` or `FAILED`; a `PENDING` row is never touched), and **package snapshots** whose `lastSeenAt` is older than the cutoff, which only happens when the agent stopped reporting. Findings, incidents, assets, compliance evidence, and the audit trail are business records and are never removed by a timer; a person closes them. Deleting a finding from the console still cascades to its `ControlEvidence` rows, so export before a cleanup if that evidence is part of an audit story.
+
+The audit trail is append-only by trigger, so retention history itself is not trimmed: a purge adds one `retention.purged` event (actor `SYSTEM`, no user id) with the cutoff, the day count, and the exact number of rows removed. That is the answer to "where did last quarter's runs go".
+
+The export is a single JSON document (`meta.format = "cybernorf.export"`, version `1`) with members, assets, findings, incidents and notes, compliance frameworks, controls, evidence, check mappings, agents (without credentials), runs, advisories, package snapshots, alert destinations (without secrets), deliveries, and the full audit chain with its hashes. It contains no token hashes, token prefixes, sealed webhook secrets, sessions, password hashes, or second-factor secrets — an export is a file that travels, so it is safe to hand to the organization that owns the data. Verify a returned file's chain by checking `prevHash`/`hash` in `sequence` order.
+
+Neither script is scheduled for you; wrap them in cron or a systemd timer. A dry run first is the norm, and the export is the backup step before any purge.
 
 After adding a migration, apply it to the test database before running the suite:
 
