@@ -1,0 +1,17 @@
+# gitleaks configuration.
+#
+# The default rule set runs unchanged; this file only exempts one documented
+# placeholder. `.env.example` is a template whose values are instructions, not
+# credentials, and the generic API-key rule flags the CRON_SECRET placeholder
+# because it looks like `secret = <high-entropy value>`. Format-specific rules
+# (cloud keys, private keys, tokens with known prefixes) still apply to that file,
+# and no exemption exists for any other path.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Commented CRON_SECRET placeholder in the environment template"
+regexTarget = "match"
+regexes = ['''CRON_SECRET="replace-with-at-least-24-characters"''']
+paths = ['''^\.env\.example$''']
