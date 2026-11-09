@@ -609,6 +609,133 @@ async function main() {
     JSON.stringify(verifyAfter.json).slice(0, 200),
   );
 
+  // ---------- personal API keys ----------
+  const orgId = orgRes.json?.organization?.id;
+  const secondOrg = await owner.call('/api/v1/organizations', {
+    method: 'POST',
+    body: { name: 'Runtime Audit Second', slug: `audit-second-${stamp}` },
+  });
+  const secondSlug = secondOrg.json?.organization?.slug;
+  check(
+    'second organization created for key binding',
+    Boolean(secondSlug),
+    `status ${secondOrg.status}`,
+  );
+
+  const keyCreate = await owner.call('/api/v1/me/api-keys', {
+    method: 'POST',
+    body: { name: `runtime key ${stamp}`, organizationId: orgId, expiresInDays: 30 },
+  });
+  const plaintextKey = keyCreate.json?.key;
+  check(
+    'personal API key created with a one-time credential',
+    res201(keyCreate) && typeof plaintextKey === 'string' && plaintextKey.startsWith('cnk_'),
+    `status ${keyCreate.status}`,
+  );
+  check(
+    'key creation response carries no digest',
+    typeof keyCreate.json?.apiKey?.prefix === 'string' &&
+      !JSON.stringify(keyCreate.json?.apiKey).includes(plaintextKey),
+    '',
+  );
+
+  const keyList = await owner.call('/api/v1/me/api-keys');
+  check(
+    'key list shows a prefix but not the credential',
+    keyList.status === 200 &&
+      typeof keyList.json?.apiKeys?.[0]?.prefix === 'string' &&
+      !keyList.text.includes(plaintextKey),
+    `status ${keyList.status}`,
+  );
+
+  const keyClient = new Client('api-key');
+  const bearerHeaders = { authorization: `Bearer ${plaintextKey}` };
+  const keyRead = await keyClient.call(`${org}/findings`, { origin: null, headers: bearerHeaders });
+  check(
+    'bearer key reads its organization without a session or Origin header',
+    keyRead.status === 200,
+    `status ${keyRead.status}`,
+  );
+
+  const keyWrite = await keyClient.call(`${org}/assets`, {
+    origin: null,
+    headers: bearerHeaders,
+    method: 'POST',
+    body: { name: 'Keyed asset', type: 'HOSTNAME', identifier: `keyed-${stamp}.example` },
+  });
+  check(
+    'bearer key writes without an Origin header',
+    res201(keyWrite),
+    `status ${keyWrite.status}`,
+  );
+
+  const keyMe = await keyClient.call('/api/v1/me', { origin: null, headers: bearerHeaders });
+  check(
+    'bearer key sees only its own organization on /me',
+    keyMe.status === 200 &&
+      keyMe.json?.organizations?.length === 1 &&
+      keyMe.json?.organizations?.[0]?.id === orgId,
+    `status ${keyMe.status} orgs ${keyMe.json?.organizations?.length}`,
+  );
+
+  const keyOtherOrg = await keyClient.call(`/api/v1/organizations/${secondSlug}/findings`, {
+    origin: null,
+    headers: bearerHeaders,
+  });
+  check(
+    'bearer key is refused another tenant with 404',
+    keyOtherOrg.status === 404,
+    `status ${keyOtherOrg.status}`,
+  );
+
+  const keyMintsKey = await keyClient.call('/api/v1/me/api-keys', {
+    origin: null,
+    headers: bearerHeaders,
+    method: 'POST',
+    body: { name: 'escalate', organizationId: orgId, expiresInDays: 30 },
+  });
+  check(
+    'bearer key cannot mint another key',
+    keyMintsKey.status === 403,
+    `status ${keyMintsKey.status}`,
+  );
+
+  const tamperedKey = `${plaintextKey.slice(0, -1)}${plaintextKey.endsWith('A') ? 'B' : 'A'}`;
+  const tamperedRead = await keyClient.call(`${org}/findings`, {
+    origin: null,
+    headers: { authorization: `Bearer ${tamperedKey}` },
+  });
+  check(
+    'tampered key rejected with 401',
+    tamperedRead.status === 401,
+    `status ${tamperedRead.status}`,
+  );
+
+  const keyRevoke = await owner.call(`/api/v1/me/api-keys/${keyCreate.json?.apiKey?.id}`, {
+    method: 'DELETE',
+  });
+  check(
+    'key revoked',
+    keyRevoke.status === 200 && keyRevoke.json?.apiKey?.status === 'REVOKED',
+    `status ${keyRevoke.status}`,
+  );
+  const afterKeyRevoke = await keyClient.call(`${org}/findings`, {
+    origin: null,
+    headers: bearerHeaders,
+  });
+  check(
+    'revoked key rejected with 401',
+    afterKeyRevoke.status === 401,
+    `status ${afterKeyRevoke.status}`,
+  );
+
+  const keyAudit = await owner.call(`${org}/audit?action=api_key.created&pageSize=5`);
+  check(
+    'key lifecycle is audited',
+    keyAudit.status === 200 && (keyAudit.json?.items?.length ?? 0) >= 1,
+    `status ${keyAudit.status} items ${keyAudit.json?.items?.length}`,
+  );
+
   // ---------- pages ----------
   const pages = [
     ['/app', owner],

@@ -7,6 +7,7 @@ import {
 } from '@/server/authz/context';
 import type { Capability } from '@/server/authz/roles';
 import { badRequest, toErrorResponse } from '@/server/errors';
+import { hasAuthorizationHeader } from '@/server/authz/api-key';
 import { assertSameOrigin, getRequestMeta, type RequestMeta } from '@/server/http/request-meta';
 import { enforceRateLimit } from '@/server/security/rate-limit';
 
@@ -109,11 +110,26 @@ async function enforceUserLimit(
   option: RateLimitOption,
   bucket: string,
 ): Promise<void> {
+  // A personal API key gets its own bucket instead of sharing the owner's, so a
+  // noisy script cannot exhaust the budget of the same person signed in to the
+  // console. Key limits are always enforced: keys travel across addresses, so
+  // the address floor alone would not bound them.
+  const identity = user.apiKey ? `api-key:${user.apiKey.id}` : `user:${user.id}`;
   await enforceRateLimit(
-    `${bucket}:user:${user.id}:${request.method}`,
+    `${bucket}:${identity}:${request.method}`,
     option.limit,
     option.windowSeconds,
   );
+}
+
+/**
+ * The origin check defends cookie-authenticated state changes against CSRF.
+ * A bearer credential is not attached automatically by browsers, and the value
+ * cannot be set cross-site without a CORS preflight, so those requests are not
+ * subject to it.
+ */
+function requiresOriginCheck(request: NextRequest): boolean {
+  return !SAFE_METHODS.has(request.method) && !hasAuthorizationHeader(request.headers);
 }
 
 /**
@@ -129,7 +145,7 @@ export function withApi<P extends RouteParams = RouteParams>(
     const meta = getRequestMeta(request);
 
     try {
-      if (!SAFE_METHODS.has(request.method)) {
+      if (requiresOriginCheck(request)) {
         assertSameOrigin(request);
       }
 
@@ -145,7 +161,7 @@ export function withApi<P extends RouteParams = RouteParams>(
       );
 
       const user = await requireAuthenticatedUser(request.headers);
-      if (isUserScoped(rateLimit)) {
+      if (isUserScoped(rateLimit) || user.apiKey) {
         await enforceUserLimit(request, user, rateLimit, 'api');
       }
 
@@ -177,7 +193,7 @@ export function withTenantApi<P extends RouteParams = RouteParams>(
     const meta = getRequestMeta(request);
 
     try {
-      if (!SAFE_METHODS.has(request.method)) {
+      if (requiresOriginCheck(request)) {
         assertSameOrigin(request);
       }
 
@@ -199,7 +215,7 @@ export function withTenantApi<P extends RouteParams = RouteParams>(
       );
 
       const user = await requireAuthenticatedUser(request.headers);
-      if (isUserScoped(rateLimit)) {
+      if (isUserScoped(rateLimit) || user.apiKey) {
         await enforceUserLimit(request, user, rateLimit, 'api-tenant');
       }
 

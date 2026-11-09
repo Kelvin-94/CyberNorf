@@ -333,6 +333,40 @@ The body must be signed before it is sent and must not be re-serialized afterwar
 8. Rotate the builtin agent's token from the detail page, copy the new value into `CYBERNORF_AGENT_TOKEN`, and run the monitor again: the run is accepted and the old token returns 401.
 9. Open `/app/:orgSlug/advisories`, insert the sample entry, and run the monitor again: the installed package appears under **Software inventory** on the agent page with the matching identifier, and the findings list gains `<package> <version> is affected by <identifier>` linked to the host asset.
 10. Run `npm run data:retention -- --org :orgSlug --days 30` for a dry run, then add `--apply`; the audit page gains a `retention.purged` entry with the counts. Run `npm run data:export -- --org :orgSlug --out /tmp/:orgSlug.json` and confirm the file holds findings and the audit chain but no agent token material.
+11. Open `/account/security` with two-factor enabled, create a personal key for the organization, copy the value from the one-time reveal, and call the API with it (below). Revoke the key and repeat the call to see `401`.
+
+## Personal API keys
+
+A personal API key lets a script act as one person in one organization without a browser session. It is separate from an agent token: an agent reports observations for one host, while a key calls the console API as its owner.
+
+Create, list, and revoke keys on `/account/security`, or with the API while signed in by session:
+
+```sh
+curl -fsS https://cybernorf.example/api/v1/me/api-keys --cookie "$SESSION"
+
+curl -fsS -X POST https://cybernorf.example/api/v1/me/api-keys \
+  -H 'content-type: application/json' --cookie "$SESSION" \
+  -d '{"name":"nightly export","organizationId":"<org id>","expiresInDays":90}'
+
+curl -fsS -X DELETE https://cybernorf.example/api/v1/me/api-keys/<keyId> --cookie "$SESSION"
+```
+
+The creation response carries the plaintext `cnk_...` value once and it is never readable again; only a SHA-256 digest and a six-character prefix are stored. Use it as a bearer credential:
+
+```sh
+curl -fsS https://cybernorf.example/api/v1/me -H "Authorization: Bearer $CYBERNORF_API_KEY"
+curl -fsS https://cybernorf.example/api/v1/organizations/acme/findings \
+  -H "Authorization: Bearer $CYBERNORF_API_KEY"
+```
+
+Rules that matter when scripting against it:
+
+- **One organization per key.** The organization is chosen at creation. Any other tenant returns `404`, even if the owner is a member of it, so a key can never be used to pivot between tenants.
+- **The role is live.** Each request re-reads the owner's membership, so a demotion or a disabled membership takes effect on the next call. A key is not a way to keep access after being removed from a team.
+- **Two-factor is required to create one,** the lifetime is between 7 and 365 days (default 90), and one person may hold at most five active keys per organization. Keys cannot be created with another key.
+- **Bearer only.** Send `Authorization: Bearer cnk_...`; state-changing requests with a bearer credential do not need an `Origin` header, because a browser never attaches that credential by itself. A present but unusable `Authorization` header fails with `401` instead of falling back to a session cookie.
+- **Rate limits are per key.** Key requests consume their own bucket, so a script cannot exhaust the budget of the same person using the console.
+- **Revocation is immediate** and has no overlap window; the audit page records `api_key.created` and `api_key.revoked` (actor `USER`, prefix only, never the key or its digest).
 
 ## Data retention and export
 
@@ -423,4 +457,5 @@ The build requires `BETTER_AUTH_SECRET` to be a valid 32+ character value when `
 | Every agent run rejected after rotation              | The host still holds the previous token. Copy the new one into `CYBERNORF_AGENT_TOKEN`.                                                                                                             |
 | An advisory matches no host                          | The ecosystem must be identical and the name must match the reported spelling; the version must fall inside `affectedRange`. Import does not scan retroactively: run the monitor on the host again. |
 | `422` importing advisories                           | The body must be `{ "advisories": [...] }` with `identifier`, `packageName`, `ecosystem`, `summary`, `severity`, and a readable `affectedRange`; the console page also accepts a bare array.        |
+| `401` on every personal API key call                 | The key is revoked or expired, or the header is not exactly `Authorization: Bearer cnk_...`. Check `/account/security`; a lost key cannot be recovered, only replaced.                              |
 | Audit verification reports `hash_mismatch`           | An audit row changed outside the application. The trigger blocks the normal path, so investigate direct database access; do not "repair" the row.                                                   |

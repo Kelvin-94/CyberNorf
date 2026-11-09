@@ -44,6 +44,8 @@ export const AuditActions = {
   NOTIFICATION_TEST_SENT: 'notification.test_sent',
   ADVISORY_IMPORTED: 'advisory.imported',
   ADVISORY_DELETED: 'advisory.deleted',
+  API_KEY_CREATED: 'api_key.created',
+  API_KEY_REVOKED: 'api_key.revoked',
   ACCESS_DENIED: 'access.denied',
 } as const;
 
