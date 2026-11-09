@@ -88,6 +88,13 @@ services:
       CRON_SECRET: ${CRON_SECRET:-}
       AGENT_REQUIRE_SIGNED_RUNS: ${AGENT_REQUIRE_SIGNED_RUNS:-false}
       NOTIFY_ALLOW_PRIVATE_WEBHOOKS: ${NOTIFY_ALLOW_PRIVATE_WEBHOOKS:-false}
+      # Empty values mean "no single sign-on"; all three of ISSUER, CLIENT_ID
+      # and CLIENT_SECRET must be set to turn it on.
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_DISPLAY_NAME: ${OIDC_DISPLAY_NAME:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
     depends_on:
       database:
         condition: service_healthy

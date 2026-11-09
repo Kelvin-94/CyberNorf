@@ -31,15 +31,20 @@ Compose publishes PostgreSQL on `POSTGRES_HOST_PORT` (default `5432`). If that p
 
 ### Environment variables
 
-| Variable                        | Required                | Purpose                                                                                   |
-| ------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                  | yes                     | PostgreSQL connection string used by Prisma and the app.                                  |
-| `BETTER_AUTH_SECRET`            | yes outside development | Signs sessions and encrypts second-factor secrets. 32+ characters in production.          |
-| `BETTER_AUTH_URL`               | yes                     | Public origin. Used for cookies, trusted origins, and the same-origin check.              |
-| `POSTGRES_HOST_PORT`            | Compose only            | Host port mapped to the PostgreSQL container.                                             |
-| `CRON_SECRET`                   | for alert sweep         | Bearer token the scheduler presents to `/api/cron/notifications`; 24+ chars.              |
-| `NOTIFY_ALLOW_PRIVATE_WEBHOOKS` | no                      | `true` allows alert destinations on loopback/private addresses (internal collector only). |
-| `AGENT_REQUIRE_SIGNED_RUNS`     | no                      | `true` refuses unsigned agent submissions; set it once every host runs a signing monitor. |
+| Variable                        | Required                | Purpose                                                                                           |
+| ------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                  | yes                     | PostgreSQL connection string used by Prisma and the app.                                          |
+| `BETTER_AUTH_SECRET`            | yes outside development | Signs sessions and encrypts second-factor secrets. 32+ characters in production.                  |
+| `BETTER_AUTH_URL`               | yes                     | Public origin. Used for cookies, trusted origins, and the same-origin check.                      |
+| `POSTGRES_HOST_PORT`            | Compose only            | Host port mapped to the PostgreSQL container.                                                     |
+| `CRON_SECRET`                   | for alert sweep         | Bearer token the scheduler presents to `/api/cron/notifications`; 24+ chars.                      |
+| `NOTIFY_ALLOW_PRIVATE_WEBHOOKS` | no                      | `true` allows alert destinations on loopback/private addresses (internal collector only).         |
+| `AGENT_REQUIRE_SIGNED_RUNS`     | no                      | `true` refuses unsigned agent submissions; set it once every host runs a signing monitor.         |
+| `OIDC_ISSUER`                   | with SSO                | Identity provider issuer URL; discovery is read from `<issuer>/.well-known/openid-configuration`. |
+| `OIDC_CLIENT_ID`                | with SSO                | Client id registered at the identity provider for this deployment.                                |
+| `OIDC_CLIENT_SECRET`            | with SSO                | Client secret; required together with the issuer and client id.                                   |
+| `OIDC_DISPLAY_NAME`             | no                      | Label of the "Continue with …" button; defaults to `single sign-on`.                              |
+| `OIDC_REDIRECT_URI`             | no                      | Only when the browser reaches the app at a different origin than `BETTER_AUTH_URL`.               |
 
 If Prisma reports `P1001: Can't reach database server` while `nc -z 127.0.0.1 <port>` succeeds, replace `localhost` with `127.0.0.1` in the connection string. Some macOS setups resolve `localhost` to IPv6 first, where the container is not listening.
 
@@ -370,6 +375,33 @@ Rules that matter when scripting against it:
 - **Rate limits are per key.** Key requests consume their own bucket, so a script cannot exhaust the budget of the same person using the console.
 - **Revocation is immediate** and has no overlap window; the audit page records `api_key.created` and `api_key.revoked` (actor `USER`, prefix only, never the key or its digest).
 
+## Single sign-on (OIDC)
+
+Sign-in with an external OpenID Connect provider is optional and off unless all three of `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` are set. Password sign-in keeps working either way, so a deployment does not lose its local administrators when SSO is enabled.
+
+`src/server/auth/oidc.ts` reads and validates the settings; `src/lib/auth.ts` registers the provider through Better Auth's `genericOAuth` plugin when they are present. Setting only some of the three throws at startup rather than quietly serving password-only login that an operator believes is federated.
+
+To try it locally, point the variables at any OIDC provider you control (Keycloak, Authentik, Dex, an Entra ID app registration, …):
+
+```sh
+OIDC_ISSUER="http://127.0.0.1:9100"          # https unless the host is loopback
+OIDC_CLIENT_ID="cybernorf"
+OIDC_CLIENT_SECRET="local-development-secret"
+OIDC_DISPLAY_NAME="Acme SSO"
+```
+
+Register `http://localhost:3000/api/auth/callback/oidc` (or `${BETTER_AUTH_URL}/api/auth/callback/oidc`) as the redirect URI at the provider, and make sure the provider asserts `email` plus `email_verified: true` for its users.
+
+What the integration trusts, and what it does not:
+
+- **A verified ID token is the only evidence accepted.** The provider's keys come from `jwks_uri` in its discovery document; `iss`, `aud`, signature and `nonce` are checked. If discovery has no usable issuer or `jwks_uri`, the provider is skipped rather than trusted, and if it was unreachable at startup the next sign-in attempt retries discovery.
+- **`email_verified` must be true.** CyberNorf never sends verification mail, so a local account is permanently `emailVerified = false`. Without that flag an IdP user who picked an address belonging to someone else could be linked to that person's existing account; with it, the IdP's own verification is the trust anchor.
+- **Linking keeps organizations intact.** The first SSO sign-in with an address that already has a local account attaches the OIDC identity to it, so existing memberships and roles still apply. Nothing about roles is read from the provider: assertion claims never grant capabilities, and an unknown address gets a new account with no organization membership.
+- **No SAML and no SCIM.** Provisioning and de-provisioning stay manual; removing a user from the IdP does not disable the CyberNorf account.
+- **PKCE is used**, the callback is rate limited like the password form, and the client secret never reaches the browser.
+
+The unit tests cover the settings reader; `src/server/auth/oidc.test.ts` runs with `npm run test:unit`.
+
 ## Data retention and export
 
 Two operator-run scripts cover the data lifecycle. Both load `.env`, so they talk to whatever database that file names; run them from a host that can reach Postgres.
@@ -460,4 +492,7 @@ The build requires `BETTER_AUTH_SECRET` to be a valid 32+ character value when `
 | An advisory matches no host                          | The ecosystem must be identical and the name must match the reported spelling; the version must fall inside `affectedRange`. Import does not scan retroactively: run the monitor on the host again. |
 | `422` importing advisories                           | The body must be `{ "advisories": [...] }` with `identifier`, `packageName`, `ecosystem`, `summary`, `severity`, and a readable `affectedRange`; the console page also accepts a bare array.        |
 | `401` on every personal API key call                 | The key is revoked or expired, or the header is not exactly `Authorization: Bearer cnk_...`. Check `/account/security`; a lost key cannot be recovered, only replaced.                              |
+| No "Continue with …" button                          | Not all of `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` are set. A partially configured provider stops the app at startup instead.                                                         |
+| SSO returns `?error=email_not_verified`              | The provider does not assert `email_verified: true` for that user, or maps the claim differently. Fix the claim in the provider; the app will not link an unverified address.                       |
+| SSO callback ends in `?error=…` after a redirect     | `OIDC_REDIRECT_URI` (or `BETTER_AUTH_URL`) does not match the redirect URI registered at the provider, or the provider's discovery is unreachable; check the app logs for `Discovery fetch failed`. |
 | Audit verification reports `hash_mismatch`           | An audit row changed outside the application. The trigger blocks the normal path, so investigate direct database access; do not "repair" the row.                                                   |
