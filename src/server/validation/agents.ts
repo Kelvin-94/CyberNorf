@@ -114,6 +114,27 @@ export const agentRunReportSchema = z
 
 export const agentIdParamSchema = z.object({ agentId: cuidLikeSchema });
 
+/**
+ * Link between a monitoring check and one adopted-framework control. The check
+ * id is the same identifier the agent reports, so the mapping survives renames
+ * of the human-readable title.
+ */
+export const createCheckMapSchema = z
+  .object({
+    checkId: z
+      .string()
+      .trim()
+      .max(80, 'Check id must be 80 characters or fewer.')
+      .regex(CHECK_ID_PATTERN, 'Use letters, digits, dots, underscores or hyphens.'),
+    organizationControlId: cuidLikeSchema,
+  })
+  .strict();
+
+/** The overview is scoped to one agent's observed checks when an id is given. */
+export const checkMapQuerySchema = z.object({ agentId: cuidLikeSchema.optional() });
+
+export type CreateCheckMapInput = z.infer<typeof createCheckMapSchema>;
+
 export type AgentSourceInput = z.infer<typeof agentSourceSchema>;
 export type AgentScopeInput = z.infer<typeof agentScopeSchema>;
 export type RegisterAgentInput = z.infer<typeof registerAgentSchema>;

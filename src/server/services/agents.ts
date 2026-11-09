@@ -14,6 +14,7 @@ import {
   type AgentCheckCounts,
 } from '@/server/domain/agents';
 import { badRequest, conflict, forbidden, notFound, unauthenticated } from '@/server/errors';
+import { attachMappedEvidence, loadMappedControls } from '@/server/services/check-maps';
 import { agentFingerprint, isUniqueConstraintError } from '@/server/services/shared';
 import type {
   AgentRunReportInput,
@@ -604,6 +605,8 @@ export interface RecordRunResult {
   findingsCreated: number;
   findingsRefreshed: number;
   findingsSuppressed: number;
+  /** Evidence items filed against mapped controls during this run. */
+  controlEvidenceAttached: number;
 }
 
 /** Statuses where a still-failing check refreshes the existing finding. */
@@ -669,7 +672,16 @@ export async function recordAgentRun(
     let findingsCreated = 0;
     let findingsRefreshed = 0;
     let findingsSuppressed = 0;
+    let controlEvidenceAttached = 0;
     const now = new Date();
+
+    // Loaded once: a run normally has a handful of failing checks, and the map
+    // table is small, but per-finding lookups would still multiply the queries.
+    const mappedByCheck = await loadMappedControls(
+      tx,
+      principal.organizationId,
+      failing.map((check) => check.id),
+    );
 
     for (const check of failing) {
       const checkTarget = check.target ?? defaultTarget;
@@ -725,6 +737,18 @@ export async function recordAgentRun(
           requestId: null,
         });
 
+        controlEvidenceAttached += await attachMappedEvidence(tx, {
+          organizationId: principal.organizationId,
+          agentId: principal.id,
+          agentName: principal.name,
+          runId: created.id,
+          checkId: check.id,
+          findingId: createdFinding.id,
+          findingTitle: createdFinding.title,
+          createdById: principal.createdById,
+          controls: mappedByCheck.get(check.id) ?? [],
+        });
+
         findingsCreated += 1;
         continue;
       }
@@ -744,6 +768,21 @@ export async function recordAgentRun(
           refresh.remediation = check.remediation;
         }
         await tx.finding.update({ where: { id: existing.id }, data: refresh });
+
+        // A control mapped after the finding was first raised still receives its
+        // evidence on the next failing run; repeat runs stay idempotent.
+        controlEvidenceAttached += await attachMappedEvidence(tx, {
+          organizationId: principal.organizationId,
+          agentId: principal.id,
+          agentName: principal.name,
+          runId: created.id,
+          checkId: check.id,
+          findingId: existing.id,
+          findingTitle: findingTitleFor(check),
+          createdById: principal.createdById,
+          controls: mappedByCheck.get(check.id) ?? [],
+        });
+
         findingsRefreshed += 1;
       } else {
         findingsSuppressed += 1;
@@ -780,13 +819,20 @@ export async function recordAgentRun(
         findingsCreated,
         findingsRefreshed,
         findingsSuppressed,
+        controlEvidenceAttached,
       },
       ipAddress: null,
       userAgent: null,
       requestId: null,
     });
 
-    return { run, findingsCreated, findingsRefreshed, findingsSuppressed };
+    return {
+      run,
+      findingsCreated,
+      findingsRefreshed,
+      findingsSuppressed,
+      controlEvidenceAttached,
+    };
   });
 
   return {
@@ -795,6 +841,7 @@ export async function recordAgentRun(
     findingsCreated: result.findingsCreated,
     findingsRefreshed: result.findingsRefreshed,
     findingsSuppressed: result.findingsSuppressed,
+    controlEvidenceAttached: result.controlEvidenceAttached,
   };
 }
 
