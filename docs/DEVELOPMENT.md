@@ -145,15 +145,18 @@ The compliance surface lives in `src/server/services/compliance.ts`, `src/server
 
 The agent surface lives in `src/server/services/agents.ts`, `src/server/domain/agents.ts`, `src/server/api/agent.ts`, `src/app/app/[orgSlug]/agents/**`, and `scripts/agent/monitor.mjs`. Console endpoints are mounted under `/api/v1/organizations/:orgSlug/agents` and use the normal cookie session:
 
-| Method and path                 | Capability     | Purpose                                                                 |
-| ------------------------------- | -------------- | ----------------------------------------------------------------------- |
-| `GET /agents`                   | `agent.read`   | Agent list with status and run counts.                                  |
-| `POST /agents`                  | `agent.manage` | Register an agent; a builtin one is activated and its token shown once. |
-| `GET /agents/:agentId`          | `agent.read`   | Record, scopes, credential metadata, runs, and raised findings.         |
-| `DELETE /agents/:agentId`       | `agent.manage` | Revoke permanently (owner only).                                        |
-| `POST /agents/:agentId/approve` | `agent.manage` | Approve a pending agent and issue its token (owner only).               |
-| `POST /agents/:agentId/suspend` | `agent.manage` | Suspend; the token keeps its scopes but is rejected until resume.       |
-| `POST /agents/:agentId/resume`  | `agent.manage` | Resume a suspended agent (owner only).                                  |
+| Method and path                 | Capability     | Purpose                                                                    |
+| ------------------------------- | -------------- | -------------------------------------------------------------------------- |
+| `GET /agents`                   | `agent.read`   | Agent list with status and run counts.                                     |
+| `POST /agents`                  | `agent.manage` | Register an agent; a builtin one is activated and its token shown once.    |
+| `GET /agents/:agentId`          | `agent.read`   | Record, scopes, credential metadata, runs, and raised findings.            |
+| `DELETE /agents/:agentId`       | `agent.manage` | Revoke permanently (owner only).                                           |
+| `POST /agents/:agentId/approve` | `agent.manage` | Approve a pending agent and issue its token (owner only).                  |
+| `POST /agents/:agentId/suspend` | `agent.manage` | Suspend; the token keeps its scopes but is rejected until resume.          |
+| `POST /agents/:agentId/resume`  | `agent.manage` | Resume a suspended agent (owner only).                                     |
+| `GET /check-maps?agentId=`      | `agent.read`   | Observed checks, their last status, their mapped controls, and the picker. |
+| `POST /check-maps`              | `agent.manage` | Map one check id to one control of an adopted framework.                   |
+| `DELETE /check-maps/:mapId`     | `agent.manage` | Stop automatic evidence for that check and control.                        |
 
 Agents call two routes that accept only a bearer token, never a session cookie:
 
@@ -178,6 +181,14 @@ Each check carries two labels: `title` names the control that was evaluated (`Ho
 
 The script needs nothing but Node: no npm install and no cloud API. It reads local evidence only (`sshd_config`, `sudoers`, `socketfilterfw`, FileVault, `lsof`, file permissions, guest account and autologin). A check whose evidence is unreadable returns `SKIP`, and a check that throws is reported `SKIP` rather than passed. Exit codes: `0` submitted or dry-run, `1` submission failed, `2` bad usage. A report written with `--out` is mode `0600`.
 
+### Compliance mapping
+
+An agent reports technical evidence; a framework asks for control evidence. `CheckControlMap` joins the two: an operator maps a check id (for example `access.host-firewall`) to a control of a framework the tenant has already adopted, on the agent detail page under **Compliance mapping**. Only observed checks are offered, because the list is built from the last 20 runs rather than from documentation.
+
+When a mapped check fails and its finding is created or refreshed, the run stores a `ControlEvidence` row of kind `FINDING` against that control, and appends `compliance.evidence_added` with `actorType = AGENT`. The attachment is idempotent per finding: a check that keeps failing does not pile up duplicates, and a mapping added later still receives evidence on the next failing run. Removing a mapping stops future attachments and leaves the evidence already filed in place, because that is audit history.
+
+Mapping requires the `agent.manage` capability (owner or administrator); reading the mapping only needs `agent.read`. `agent.check_mapped` and `agent.check_unmapped` are audited against the framework record.
+
 ### Scheduling and rotation
 
 CyberNorf never initiates a scan, so schedule the monitor on the host itself, for example a `launchd` agent on macOS, a systemd timer on Linux, or a weekly cron entry on a hardened jump host. Tokens cannot be rotated in place: revoke the agent, register a replacement, and update the host's environment. Suspension is the reversible option when a host is being rebuilt.
@@ -189,6 +200,7 @@ CyberNorf never initiates a scan, so schedule the monitor on the host itself, fo
 3. Run the monitor with that token and refresh; the run appears with its pass/fail/skip breakdown and any new findings.
 4. Register an `ANTHROPIC` agent: it stays `PENDING_APPROVAL` with no credential.
 5. Approve it as the owner (optionally narrowing scopes) and copy the token from the reveal; then suspend, resume, and revoke it from the detail page.
+6. Adopt a framework, then map the failing check on the agent page to a control; run the monitor again and open the control to see the evidence filed by the agent.
 
 After adding a migration, apply it to the test database before running the suite:
 

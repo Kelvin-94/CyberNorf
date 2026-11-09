@@ -34,6 +34,8 @@ export const AuditActions = {
   AGENT_RESUMED: 'agent.resumed',
   AGENT_REVOKED: 'agent.revoked',
   AGENT_RUN_RECORDED: 'agent.run_recorded',
+  AGENT_CHECK_MAPPED: 'agent.check_mapped',
+  AGENT_CHECK_UNMAPPED: 'agent.check_unmapped',
   ACCESS_DENIED: 'access.denied',
 } as const;
 

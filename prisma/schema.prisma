@@ -191,6 +191,7 @@ model User {
   adoptedFrameworks OrganizationFramework[] @relation("FrameworkAdoptedBy")
   createdAgents     Agent[]                 @relation("AgentCreatedBy")
   approvedAgents    Agent[]                 @relation("AgentApprovedBy")
+  createdCheckMaps  CheckControlMap[]       @relation("CheckMapCreatedBy")
 
   @@unique([email])
   @@map("user")
@@ -290,6 +291,7 @@ model Organization {
   evidence    ControlEvidence[]
   agents      Agent[]
   agentRuns   AgentRun[]
+  checkMaps   CheckControlMap[]
 
   @@map("organizations")
 }
@@ -491,6 +493,7 @@ model OrganizationControl {
   owner                   User?                 @relation("ControlOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   updatedBy               User?                 @relation("ControlUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   evidence                ControlEvidence[]
+  checkMaps               CheckControlMap[]
 
   @@unique([organizationFrameworkId, controlId])
   @@index([organizationId, status])
@@ -524,6 +527,28 @@ model ControlEvidence {
   @@map("control_evidence")
 }
 
+/// Operator-declared link between one monitoring check and one control in an
+/// adopted framework. When an agent reports the check as failing, the resulting
+/// finding is attached to the mapped control as evidence, so technical
+/// telemetry becomes audit evidence without anyone re-typing it.
+model CheckControlMap {
+  id                    String              @id @default(cuid())
+  organizationId        String
+  /// Check id exactly as the agent reports it, e.g. "access.host-firewall".
+  checkId               String
+  organizationControlId String
+  createdById           String
+  createdAt             DateTime            @default(now())
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationControl   OrganizationControl @relation(fields: [organizationControlId], references: [id], onDelete: Cascade)
+  createdBy             User                @relation("CheckMapCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([organizationId, checkId, organizationControlId])
+  @@index([organizationId, checkId])
+  @@index([organizationControlId])
+  @@map("check_control_maps")
+}
+
 // ---------------------------------------------------------------------------
 // Agents (offline monitoring and owner-approved external agents)
 // ---------------------------------------------------------------------------
@@ -540,7 +565,7 @@ model Agent {
   source         AgentSource
   status         AgentStatus  @default(PENDING_APPROVAL)
   /// Granted scopes from the agent scope catalog; enforced per request.
-  scopes         String[]
+  scopes         String[]     @default([])
   tokenHash      String?      @unique
   tokenPrefix    String?
   tokenExpiresAt DateTime?

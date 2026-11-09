@@ -4,8 +4,11 @@ import { notFound } from 'next/navigation';
 import { ActionButton } from '@/components/action-button';
 import { ApproveAgentForm } from '@/components/agents/approve-agent-form';
 import { AgentStatusBadge } from '@/components/agents/agent-status-badge';
+import { CheckMapForm } from '@/components/agents/check-map-form';
+import { can } from '@/server/authz/roles';
 import { canTransitionAgent, AGENT_SCOPE_DETAILS, AGENT_SCOPES } from '@/server/domain/agents';
 import { getAgentDetail } from '@/server/services/agents';
+import { listCheckMaps } from '@/server/services/check-maps';
 import { loadTenantContext } from '@/server/ui/session';
 
 export const metadata: Metadata = { title: 'Agent · CyberNorf' };
@@ -33,9 +36,13 @@ export default async function AgentDetailPage({
     notFound();
   }
 
-  const detail = await getAgentDetail(ctx, agentId);
+  const [detail, mapping] = await Promise.all([
+    getAgentDetail(ctx, agentId),
+    listCheckMaps(ctx, agentId),
+  ]);
   const base = `/app/${ctx.organization.slug}`;
   const agent = detail.agent;
+  const canManageMapping = can(ctx.membership.role, 'agent.manage');
   // The routes admit OWNER and ADMIN, but approval, suspension and revocation
   // are owner-only in the service, so the UI never offers an action that will
   // be rejected.
@@ -168,6 +175,117 @@ export default async function AgentDetailPage({
         {!isOwner && agent.status !== 'REVOKED' && agent.status !== 'PENDING_APPROVAL' ? (
           <p className="small muted">Only an organization owner can change this agent's state.</p>
         ) : null}
+      </section>
+
+      <section className="card" style={{ marginTop: '1.5rem' }}>
+        <h2>Compliance mapping</h2>
+        <p className="small muted">
+          A mapped check files its finding as evidence on the chosen control, so a failing host
+          shows up in the framework audit trail without an analyst copying it across.
+        </p>
+
+        {mapping.controls.length === 0 ? (
+          <p className="banner warning">
+            No framework is adopted in this organization, so there is nothing to map onto.{' '}
+            <Link href={`${base}/compliance`}>Adopt a framework</Link> first.
+          </p>
+        ) : null}
+
+        {mapping.checks.length === 0 ? (
+          <p className="small muted">
+            No checks observed yet. The checks this agent reports appear here after its first run.
+          </p>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Check</th>
+                <th>Last status</th>
+                <th>Mapped controls</th>
+                {canManageMapping ? <th>Add mapping</th> : null}
+              </tr>
+            </thead>
+            <tbody>
+              {mapping.checks.map((check) => {
+                const available = mapping.controls
+                  .filter(
+                    (control) =>
+                      !check.mappings.some((row) => row.organizationControlId === control.id),
+                  )
+                  .map((control) => ({
+                    value: control.id,
+                    label: `${control.frameworkCode} · ${control.controlCode} ${control.controlTitle}`,
+                  }));
+
+                return (
+                  <tr key={check.checkId}>
+                    <td className="small">
+                      <span className="mono">{check.checkId}</span>
+                      <div className="muted">{check.title}</div>
+                    </td>
+                    <td>
+                      <span
+                        className={`badge ${
+                          check.lastStatus === 'PASS'
+                            ? 'success'
+                            : check.lastStatus === 'FAIL'
+                              ? 'denied'
+                              : 'medium'
+                        }`}
+                      >
+                        {check.lastStatus.toLowerCase()}
+                      </span>
+                    </td>
+                    <td className="small">
+                      {check.mappings.length === 0 ? (
+                        <span className="muted">Not mapped</span>
+                      ) : (
+                        <div className="stack" style={{ gap: '0.4rem' }}>
+                          {check.mappings.map((row) => (
+                            <div
+                              key={row.mapId}
+                              className="row"
+                              style={{ gap: '0.5rem', flexWrap: 'wrap' }}
+                            >
+                              <span>
+                                {row.frameworkCode} ·{' '}
+                                <span className="mono">{row.controlCode}</span> {row.controlTitle}
+                              </span>
+                              <span className="muted">{row.evidenceCount} evidence</span>
+                              {canManageMapping ? (
+                                <ActionButton
+                                  action={`/api/v1/organizations/${ctx.organization.slug}/check-maps/${row.mapId}`}
+                                  method="DELETE"
+                                  label="Remove"
+                                  variant="secondary"
+                                  confirmText={`Stop filing evidence for ${check.checkId} on ${row.controlCode}? Evidence already filed stays on the control.`}
+                                  successMessage="Mapping removed."
+                                />
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    {canManageMapping ? (
+                      <td>
+                        {available.length === 0 ? (
+                          <span className="small muted">Already mapped to every control.</span>
+                        ) : (
+                          <CheckMapForm
+                            orgSlug={ctx.organization.slug}
+                            checkId={check.checkId}
+                            options={available}
+                          />
+                        )}
+                      </td>
+                    ) : null}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </section>
 
       <section className="card" style={{ marginTop: '1.5rem' }}>
