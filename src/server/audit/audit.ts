@@ -38,6 +38,7 @@ export const AuditActions = {
   AGENT_CHECK_UNMAPPED: 'agent.check_unmapped',
   AGENT_HEARTBEAT_UPDATED: 'agent.heartbeat_updated',
   AGENT_TOKEN_ROTATED: 'agent.token_rotated',
+  RETENTION_PURGED: 'retention.purged',
   NOTIFICATION_CHANNEL_CREATED: 'notification.channel_created',
   NOTIFICATION_CHANNEL_DELETED: 'notification.channel_deleted',
   NOTIFICATION_TEST_SENT: 'notification.test_sent',
