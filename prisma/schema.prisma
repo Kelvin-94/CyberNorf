@@ -161,6 +161,27 @@ enum AgentRunStatus {
   FAILED
 }
 
+/// Transport for an alert destination. Webhooks are the only transport in this
+/// release; email requires an SMTP dependency the platform does not ship.
+enum NotificationChannelKind {
+  WEBHOOK
+}
+
+/// What happened that is worth telling an operator about.
+enum NotificationEventType {
+  AGENT_OFFLINE
+  AGENT_RECOVERED
+  TEST
+}
+
+/// Delivery state of one queued alert. FAILED is terminal after the retry
+/// budget is spent; the attempt history is kept for diagnosis.
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
 // ---------------------------------------------------------------------------
 // Identity (managed by Better Auth; schema generated with @better-auth/cli)
 // ---------------------------------------------------------------------------
@@ -192,6 +213,7 @@ model User {
   createdAgents     Agent[]                 @relation("AgentCreatedBy")
   approvedAgents    Agent[]                 @relation("AgentApprovedBy")
   createdCheckMaps  CheckControlMap[]       @relation("CheckMapCreatedBy")
+  createdChannels   NotificationChannel[]   @relation("NotificationChannelCreatedBy")
 
   @@unique([email])
   @@map("user")
@@ -274,24 +296,26 @@ model RateLimit {
 // ---------------------------------------------------------------------------
 
 model Organization {
-  id          String                  @id @default(cuid())
-  name        String
-  slug        String                  @unique
-  description String?
-  tier        SubscriptionTier        @default(PROFESSIONAL)
-  createdAt   DateTime                @default(now())
-  updatedAt   DateTime                @updatedAt
-  memberships Membership[]
-  assets      Asset[]
-  findings    Finding[]
-  incidents   Incident[]
-  auditEvents AuditEvent[]
-  frameworks  OrganizationFramework[]
-  controls    OrganizationControl[]
-  evidence    ControlEvidence[]
-  agents      Agent[]
-  agentRuns   AgentRun[]
-  checkMaps   CheckControlMap[]
+  id                   String                  @id @default(cuid())
+  name                 String
+  slug                 String                  @unique
+  description          String?
+  tier                 SubscriptionTier        @default(PROFESSIONAL)
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  memberships          Membership[]
+  assets               Asset[]
+  findings             Finding[]
+  incidents            Incident[]
+  auditEvents          AuditEvent[]
+  frameworks           OrganizationFramework[]
+  controls             OrganizationControl[]
+  evidence             ControlEvidence[]
+  agents               Agent[]
+  agentRuns            AgentRun[]
+  checkMaps            CheckControlMap[]
+  notificationChannels NotificationChannel[]
+  notificationEvents   NotificationEvent[]
 
   @@map("organizations")
 }
@@ -558,34 +582,41 @@ model CheckControlMap {
 /// recover a usable credential; the plaintext is shown once at registration
 /// (builtin agents) or approval (every external source).
 model Agent {
-  id             String       @id @default(cuid())
-  organizationId String
-  name           String
-  description    String?
-  source         AgentSource
-  status         AgentStatus  @default(PENDING_APPROVAL)
+  id                      String       @id @default(cuid())
+  organizationId          String
+  name                    String
+  description             String?
+  source                  AgentSource
+  status                  AgentStatus  @default(PENDING_APPROVAL)
   /// Granted scopes from the agent scope catalog; enforced per request.
-  scopes         String[]     @default([])
-  tokenHash      String?      @unique
-  tokenPrefix    String?
-  tokenExpiresAt DateTime?
-  lastSeenAt     DateTime?
-  lastRunAt      DateTime?
-  runCount       Int          @default(0)
-  createdById    String
-  approvedById   String?
-  approvedAt     DateTime?
-  revokedAt      DateTime?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdBy      User         @relation("AgentCreatedBy", fields: [createdById], references: [id])
-  approvedBy     User?        @relation("AgentApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
-  runs           AgentRun[]
-  findings       Finding[]
+  scopes                  String[]     @default([])
+  tokenHash               String?      @unique
+  tokenPrefix             String?
+  tokenExpiresAt          DateTime?
+  lastSeenAt              DateTime?
+  lastRunAt               DateTime?
+  /// Operator expectation for reporting cadence. When set, a missed window is
+  /// reported as STALE and a doubled one as OFFLINE and queued as an alert.
+  expectedIntervalMinutes Int?
+  /// When an offline alert was last queued, so one outage alerts once and a
+  /// recovery clears the marker.
+  offlineNotifiedAt       DateTime?
+  runCount                Int          @default(0)
+  createdById             String
+  approvedById            String?
+  approvedAt              DateTime?
+  revokedAt               DateTime?
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy               User         @relation("AgentCreatedBy", fields: [createdById], references: [id])
+  approvedBy              User?        @relation("AgentApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  runs                    AgentRun[]
+  findings                Finding[]
 
   @@unique([organizationId, name])
   @@index([organizationId, status])
+  @@index([organizationId, status, lastRunAt])
   @@map("agents")
 }
 
@@ -616,6 +647,56 @@ model AgentRun {
   @@index([organizationId, startedAt])
   @@index([agentId, startedAt])
   @@map("agent_runs")
+}
+
+/// Where alerts are delivered: an HTTPS endpoint the operator controls, plus
+/// the HMAC secret used to sign each delivery. The secret is stored sealed with
+/// AES-256-GCM under a key derived from BETTER_AUTH_SECRET, never in clear text.
+model NotificationChannel {
+  id              String                  @id @default(cuid())
+  organizationId  String
+  name            String
+  kind            NotificationChannelKind @default(WEBHOOK)
+  url             String
+  secretSealed    String
+  enabled         Boolean                 @default(true)
+  createdById     String
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  lastDeliveredAt DateTime?
+  lastError       String?
+  organization    Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy       User                    @relation("NotificationChannelCreatedBy", fields: [createdById], references: [id])
+  events          NotificationEvent[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, enabled])
+  @@map("notification_channels")
+}
+
+/// Outbox row for one alert to one channel. Queued in the same transaction as
+/// the condition that caused it, delivered by the cron sweep, and retried with
+/// exponential backoff. dedupeKey makes a repeated sweep idempotent.
+model NotificationEvent {
+  id             String                @id @default(cuid())
+  organizationId String
+  channelId      String
+  type           NotificationEventType
+  payload        Json
+  status         NotificationStatus    @default(PENDING)
+  attempts       Int                   @default(0)
+  nextAttemptAt  DateTime              @default(now())
+  deliveredAt    DateTime?
+  lastError      String?
+  dedupeKey      String?
+  createdAt      DateTime              @default(now())
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  channel        NotificationChannel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, dedupeKey])
+  @@index([status, nextAttemptAt])
+  @@index([organizationId, createdAt])
+  @@map("notification_events")
 }
 
 /// Append-only audit trail. A database trigger rejects UPDATE and DELETE on

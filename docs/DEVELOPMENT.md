@@ -31,12 +31,14 @@ Compose publishes PostgreSQL on `POSTGRES_HOST_PORT` (default `5432`). If that p
 
 ### Environment variables
 
-| Variable             | Required                | Purpose                                                                          |
-| -------------------- | ----------------------- | -------------------------------------------------------------------------------- |
-| `DATABASE_URL`       | yes                     | PostgreSQL connection string used by Prisma and the app.                         |
-| `BETTER_AUTH_SECRET` | yes outside development | Signs sessions and encrypts second-factor secrets. 32+ characters in production. |
-| `BETTER_AUTH_URL`    | yes                     | Public origin. Used for cookies, trusted origins, and the same-origin check.     |
-| `POSTGRES_HOST_PORT` | Compose only            | Host port mapped to the PostgreSQL container.                                    |
+| Variable                        | Required                | Purpose                                                                                   |
+| ------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                  | yes                     | PostgreSQL connection string used by Prisma and the app.                                  |
+| `BETTER_AUTH_SECRET`            | yes outside development | Signs sessions and encrypts second-factor secrets. 32+ characters in production.          |
+| `BETTER_AUTH_URL`               | yes                     | Public origin. Used for cookies, trusted origins, and the same-origin check.              |
+| `POSTGRES_HOST_PORT`            | Compose only            | Host port mapped to the PostgreSQL container.                                             |
+| `CRON_SECRET`                   | for alert sweep         | Bearer token the scheduler presents to `/api/cron/notifications`; 24+ chars.              |
+| `NOTIFY_ALLOW_PRIVATE_WEBHOOKS` | no                      | `true` allows alert destinations on loopback/private addresses (internal collector only). |
 
 If Prisma reports `P1001: Can't reach database server` while `nc -z 127.0.0.1 <port>` succeeds, replace `localhost` with `127.0.0.1` in the connection string. Some macOS setups resolve `localhost` to IPv6 first, where the container is not listening.
 
@@ -60,6 +62,9 @@ The Phase 1 schema and its migrations are checked in:
 - `20261102115532_organization_description` — organization descriptions.
 - `20261104095010_compliance_frameworks` — compliance catalog (`frameworks`, `framework_controls`), tenant adoption and attestation tables, control evidence, the curated framework seed (61 controls across SOC 2, ISO/IEC 27001, NIST CSF 2.0, PCI DSS, and GDPR), and the single-target and review-date CHECK constraints.
 - `20261104095310_compliance_control_position` — explicit `position` on catalog controls so the UI lists them in standard order. Both migrations are safe to replay on an empty database.
+- `20261108130823_agent_monitoring` — `agents` and `agent_runs`, the `AGENT` finding source and audit actor.
+- `20261109090337_check_control_maps` — `check_control_maps`, joining an observed check id to a tenant control.
+- `20261109092103_agent_heartbeats_notifications` — agent cadence and outage marker columns, plus `notification_channels` and `notification_events`.
 
 Apply them to the development database:
 
@@ -150,6 +155,7 @@ The agent surface lives in `src/server/services/agents.ts`, `src/server/domain/a
 | `GET /agents`                   | `agent.read`   | Agent list with status and run counts.                                     |
 | `POST /agents`                  | `agent.manage` | Register an agent; a builtin one is activated and its token shown once.    |
 | `GET /agents/:agentId`          | `agent.read`   | Record, scopes, credential metadata, runs, and raised findings.            |
+| `PATCH /agents/:agentId`        | `agent.manage` | Set or clear the expected reporting interval (`expectedIntervalMinutes`).  |
 | `DELETE /agents/:agentId`       | `agent.manage` | Revoke permanently (owner only).                                           |
 | `POST /agents/:agentId/approve` | `agent.manage` | Approve a pending agent and issue its token (owner only).                  |
 | `POST /agents/:agentId/suspend` | `agent.manage` | Suspend; the token keeps its scopes but is rejected until resume.          |
@@ -189,6 +195,41 @@ When a mapped check fails and its finding is created or refreshed, the run store
 
 Mapping requires the `agent.manage` capability (owner or administrator); reading the mapping only needs `agent.read`. `agent.check_mapped` and `agent.check_unmapped` are audited against the framework record.
 
+### Offline detection and alerts
+
+An agent that runs on a host nobody watches can fail silently. Setting an expected interval on the agent (`PATCH /agents/:agentId` with `expectedIntervalMinutes`, 5 to 10080, or `null` to disable) makes silence observable. Health is derived from that interval and the last run: within one interval is `ONLINE`, one missed interval is `STALE`, two are `OFFLINE`, and an agent that is not `ACTIVE` or has no interval is `UNKNOWN`. Only `OFFLINE` raises an alert, so a single late run never pages anyone. Both the agent list and the agent detail page show the state.
+
+Alert destinations are ordinary HTTPS endpoints:
+
+| Method and path                        | Capability            | Purpose                                                 |
+| -------------------------------------- | --------------------- | ------------------------------------------------------- |
+| `GET /notification-channels`           | `notification.read`   | Destinations, recent deliveries, and scheduling state.  |
+| `POST /notification-channels`          | `notification.manage` | Add a signing secret and endpoint URL.                  |
+| `DELETE /notification-channels/:id`    | `notification.manage` | Remove the destination and its delivery history.        |
+| `POST /notification-channels/:id/test` | `notification.manage` | Queue and immediately attempt one signed test delivery. |
+
+A destination must be an absolute HTTPS URL with no embedded credentials, and it must not resolve to loopback, private, link-local, or reserved addresses. `NOTIFY_ALLOW_PRIVATE_WEBHOOKS=true` lifts the address restriction for a deployment whose collector is internal; the URL policy is re-checked on every delivery, not only when the destination is created. Redirects are refused.
+
+The signing secret is sealed with AES-256-GCM using a key derived from `BETTER_AUTH_SECRET`, never returned by the API, and not written to the audit trail (only the host is recorded). Replacing `BETTER_AUTH_SECRET` therefore makes existing destinations undeliverable: delete and re-add them with the same secret value.
+
+Each delivery is a `POST` with `content-type: application/json` and these headers:
+
+- `x-cybernorf-event` — `AGENT_OFFLINE`, `AGENT_RECOVERED`, or `TEST`.
+- `x-cybernorf-delivery` — the event id, usable as an idempotency key.
+- `x-cybernorf-timestamp` — Unix seconds.
+- `x-cybernorf-signature` — `sha256=` followed by the hex HMAC-SHA256 of the timestamp, a literal dot, and the raw body. Compare it in constant time and reject timestamps older than a few minutes to bound replay.
+
+Delivery is retried with backoff (1, 5, 15, 60, and 240 minutes) up to five attempts, after which the event is `FAILED` and the destination records the last error. A failed attempt never loses the event. An outage alert still queued when the host reports again is dropped and replaced by the recovery alert. Attempts are claimed atomically, so two overlapping sweeps cannot deliver the same event twice.
+
+The sweep itself is a single authenticated route, `/api/cron/notifications`:
+
+```sh
+CRON_SECRET=$(openssl rand -base64 32)   # store it in the environment
+curl -fsS -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/notifications
+```
+
+It answers `503` when `CRON_SECRET` is unset or shorter than 24 characters, and `401` for a wrong token, so a deployment that forgets the variable cannot be triggered by anyone who finds the route. Run it every minute from cron, a systemd timer, or a platform scheduler. The response reports how many agents were checked, how many went offline or recovered, how many alerts were queued, and the delivery counts.
+
 ### Scheduling and rotation
 
 CyberNorf never initiates a scan, so schedule the monitor on the host itself, for example a `launchd` agent on macOS, a systemd timer on Linux, or a weekly cron entry on a hardened jump host. Tokens cannot be rotated in place: revoke the agent, register a replacement, and update the host's environment. Suspension is the reversible option when a host is being rebuilt.
@@ -201,6 +242,7 @@ CyberNorf never initiates a scan, so schedule the monitor on the host itself, fo
 4. Register an `ANTHROPIC` agent: it stays `PENDING_APPROVAL` with no credential.
 5. Approve it as the owner (optionally narrowing scopes) and copy the token from the reveal; then suspend, resume, and revoke it from the detail page.
 6. Adopt a framework, then map the failing check on the agent page to a control; run the monitor again and open the control to see the evidence filed by the agent.
+7. On `/app/:orgSlug/settings`, add an alert destination pointing at a receiver that prints the signature headers, send a test, then set the agent's expected interval to 5 minutes, stop running the monitor, and watch the sweep raise `AGENT_OFFLINE` (see below).
 
 After adding a migration, apply it to the test database before running the suite:
 
