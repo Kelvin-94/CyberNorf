@@ -1,0 +1,161 @@
+# Production stack: TLS proxy, console, and PostgreSQL.
+#
+#   cp .env.production.example .env.production   # then edit every value
+#   docker compose -f compose.prod.yaml --env-file .env.production up -d --build
+#
+# Topology:
+#   proxy (80/443, the only published ports) -> app -> database
+#   `edge` network: proxy <-> app
+#   `backend` network: app <-> database, marked internal so it has no route off
+#   the host
+#
+# Required values have no default on purpose: compose refuses to start instead
+# of booting a deployment with a placeholder secret.
+
+name: cybernorf-prod
+
+x-app-image: &app-image
+  image: cybernorf-app:${CYBERNORF_IMAGE_TAG:-local}
+  build:
+    context: .
+    target: runner
+
+services:
+  database:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env.production}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env.production}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+    # The listener is TLS-only-by-capability: the certificate is generated on
+    # first boot by the wrapper, because the app refuses a remote database that
+    # does not request TLS in production.
+    entrypoint: ['/bin/sh', '/usr/local/bin/entrypoint-tls.sh']
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/tls/server.crt
+      - -c
+      - ssl_key_file=/var/lib/postgresql/tls/server.key
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - ssl_min_protocol_version=TLSv1.2
+    volumes:
+      - database-data:/var/lib/postgresql/data
+      # Generated on first boot and shared read-only with the app so the client
+      # can verify the certificate instead of merely encrypting the link.
+      - database-tls:/var/lib/postgresql/tls
+      - ./deploy/postgres/entrypoint-tls.sh:/usr/local/bin/entrypoint-tls.sh:ro
+    networks: [backend]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    security_opt: ['no-new-privileges:true']
+
+  # One-shot schema step. The image is the same one the app runs, so a deploy
+  # cannot apply migrations from a different build than the code serving traffic.
+  migrate:
+    <<: *app-image
+    restart: 'no'
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env.production}
+    depends_on:
+      database:
+        condition: service_healthy
+    networks: [backend]
+    volumes:
+      - database-tls:/etc/cybernorf/database-tls:ro
+    command: ['npx', 'prisma', 'migrate', 'deploy']
+    security_opt: ['no-new-privileges:true']
+
+  app:
+    <<: *app-image
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env.production}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env.production}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?set BETTER_AUTH_URL in .env.production}
+      CRON_SECRET: ${CRON_SECRET:-}
+      AGENT_REQUIRE_SIGNED_RUNS: ${AGENT_REQUIRE_SIGNED_RUNS:-false}
+      NOTIFY_ALLOW_PRIVATE_WEBHOOKS: ${NOTIFY_ALLOW_PRIVATE_WEBHOOKS:-false}
+    depends_on:
+      database:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [backend, edge]
+    volumes:
+      # DATABASE_URL points sslrootcert here, so the client verifies the server
+      # rather than accepting any certificate that happens to be presented.
+      - database-tls:/etc/cybernorf/database-tls:ro
+    # The server compiles nothing at runtime, so the root filesystem can be
+    # read-only; Next.js still needs a writable cache and temp directory.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/ready').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      CYBERNORF_DOMAIN: ${CYBERNORF_DOMAIN:?set CYBERNORF_DOMAIN in .env.production}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env.production}
+    # ACME needs 80/tcp and 443/tcp reachable from the internet. The host ports
+    # are configurable so a staging run can bind alternatives; leave the
+    # defaults in production.
+    ports:
+      - '${CYBERNORF_HTTP_PORT:-80}:80'
+      - '${CYBERNORF_HTTPS_PORT:-443}:443'
+      - '${CYBERNORF_HTTPS_PORT:-443}:443/udp'
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [edge]
+    security_opt: ['no-new-privileges:true']
+
+networks:
+  # Only the proxy and the app share this network.
+  edge:
+  # No route off the host: the database is not reachable from the LAN, and the
+  # app cannot reach the internet through it.
+  backend:
+    internal: true
+
+volumes:
+  database-data:
+  # The PostgreSQL server certificate, created by the entrypoint wrapper on the
+  # first boot and mounted read-only into the app and migration containers.
+  database-tls:
+  # Certificates and the ACME account key live here. Losing this volume means
+  # re-issuing certificates, so back it up with the database.
+  caddy-data:
+  caddy-config:

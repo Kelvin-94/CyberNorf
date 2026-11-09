@@ -79,16 +79,17 @@ npm run typecheck
 npm run build
 ```
 
-See [the local development guide](docs/DEVELOPMENT.md) for setup, test-database creation, and the demo walkthrough, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the implemented design.
+See [the local development guide](docs/DEVELOPMENT.md) for setup, test-database creation, and the demo walkthrough, [the production deployment guide](docs/DEPLOYMENT.md) for the TLS proxy and compose stack, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the implemented design.
 
 ### Known limitations
 
 - No password reset, email verification, invitation email, or SSO. An owner or administrator must add an already-registered account by email.
-- No file uploads, evidence attachments, exports, or background jobs.
-- No CSP or document-level security headers yet; API responses carry `no-store`, `nosniff`, and `Referrer-Policy` headers.
+- No file uploads or evidence attachments.
+- No background worker is bundled: a cron job or systemd timer calls the alert sweep, and the retention and export scripts are run by an operator.
 - The audit chain is hash-linked but not signed, and depends on restricting direct database access.
-- Rate-limit counters are never garbage collected.
-- Deletion of tenant data relies on database cascades; there is no retention or export workflow.
+- Rate-limit counters are only removed when `data:retention` runs with `--prune-rate-limits`.
+- Retention never removes findings, incidents, assets, compliance evidence, or audit rows; a person closes those records.
+- The production stack targets one host: one console container against one PostgreSQL database, with no horizontal scaling or high availability.
 
 Before any public or production release, still required: backup and restoration drills, monitoring and alerting, retention and deletion workflows, deployment and rollback documentation, and an independent security review.
 

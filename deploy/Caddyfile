@@ -1,0 +1,47 @@
+# Reverse proxy for the CyberNorf console.
+#
+# Caddy obtains and renews the certificate for $CYBERNORF_DOMAIN over ACME, so
+# the host needs a public DNS record and reachable ports 80 and 443. The app is
+# never published directly: it is only reachable on the compose `edge` network.
+#
+# The application already sends its own security headers (CSP, HSTS, COOP,
+# Permissions-Policy) in production, so the proxy does not duplicate them.
+
+{
+	email {$ACME_EMAIL}
+	admin off
+	# Keep the access log useful without recording query strings that can carry
+	# identifiers, and never log Authorization or Cookie headers.
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$CYBERNORF_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		-Server
+		# Caddy answers ACME challenges itself; nothing else needs this header.
+		-Server-Timing
+	}
+
+	reverse_proxy app:3000 {
+		# The proxy terminates TLS, so the app must be told the request was
+		# https. Otherwise the same-origin (CSRF) check compares http to the
+		# https origin in BETTER_AUTH_URL and rejects every form post.
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+		# A slow client must not hold a worker forever.
+		transport http {
+			dial_timeout 10s
+			response_header_timeout 60s
+		}
+	}
+
+	log {
+		output stdout
+		format json
+		level INFO
+	}
+}
