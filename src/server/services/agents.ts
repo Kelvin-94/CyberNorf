@@ -370,10 +370,11 @@ async function loadAgent(
   source: AgentSource;
   status: AgentStatus;
   scopes: string[];
+  tokenPrefix: string | null;
 }> {
   const agent = await prisma.agent.findFirst({
     where: { id: agentId, organizationId: ctx.organization.id },
-    select: { id: true, name: true, source: true, status: true, scopes: true },
+    select: { id: true, name: true, source: true, status: true, scopes: true, tokenPrefix: true },
   });
   if (!agent) {
     throw notFound('Agent not found in this organization.');
@@ -631,6 +632,77 @@ export async function revokeAgent(
 
     return serializeAgent(row);
   });
+}
+
+/**
+ * Issues a replacement credential for an active agent.
+ *
+ * Revoking and re-registering loses the run history and the check-to-control
+ * mappings, so a leaked token or an expiring lifetime had no clean answer. The
+ * agent row is kept, the old hash is replaced in the same transaction, and the
+ * previous prefix is recorded so an operator can tell the two credentials apart
+ * in the audit trail. The plaintext token is returned once, here.
+ *
+ * The signing key is derived from the credential, so rotation also invalidates
+ * any signature produced with the old token.
+ */
+export async function rotateAgentToken(
+  ctx: TenantContext,
+  agentId: string,
+  note: string | null = null,
+): Promise<ApproveAgentResult> {
+  assertOwner(ctx);
+  const agent = await loadAgent(ctx, agentId);
+
+  if (agent.status !== 'ACTIVE') {
+    throw conflict(
+      agent.status === 'REVOKED'
+        ? 'This agent was revoked and cannot be rotated.'
+        : 'Only an active agent can have its token rotated.',
+    );
+  }
+
+  const issued = issueAgentToken(agent.source);
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.agent.update({
+      where: { id: agent.id },
+      data: {
+        tokenHash: issued.hash,
+        tokenPrefix: issued.prefix,
+        tokenExpiresAt: issued.expiresAt,
+      },
+      select: AGENT_SELECT,
+    });
+
+    await appendAuditEvent(tx, {
+      organizationId: ctx.organization.id,
+      actorType: 'USER',
+      actorId: ctx.user.id,
+      action: AuditActions.AGENT_TOKEN_ROTATED,
+      outcome: 'SUCCESS',
+      targetType: 'agent',
+      targetId: row.id,
+      summary: `Rotated the token for agent "${row.name}"`,
+      metadata: {
+        previousPrefix: agent.tokenPrefix,
+        tokenPrefix: issued.prefix,
+        tokenExpiresAt: issued.expiresAt.toISOString(),
+        note,
+      },
+      ipAddress: ctx.meta.ipAddress,
+      userAgent: ctx.meta.userAgent,
+      requestId: ctx.meta.requestId,
+    });
+
+    return row;
+  });
+
+  return {
+    agent: serializeAgent(updated),
+    token: issued.token,
+    tokenExpiresAt: issued.expiresAt.toISOString(),
+  };
 }
 
 /**

@@ -20,6 +20,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -769,6 +770,20 @@ function payloadOf(report) {
   return body;
 }
 
+/**
+ * Signs the exact bytes that will be sent. The key is derived from the agent
+ * token, matching `src/server/domain/agent-signature.ts`, so rotating the token
+ * on the server invalidates signatures made with the previous one.
+ */
+function signSubmission(token, timestampSeconds, body) {
+  const key = createHash('sha256').update(`cybernorf-agent-signing:v1:${token}`, 'utf8').digest();
+  const mac = createHmac('sha256', key)
+    .update(`${timestampSeconds}.`, 'utf8')
+    .update(body, 'utf8')
+    .digest('hex');
+  return `sha256=${mac}`;
+}
+
 async function submit(report) {
   if (!options.token) {
     log('No token supplied; report was not submitted. Use --token or CYBERNORF_AGENT_TOKEN.');
@@ -779,6 +794,8 @@ async function submit(report) {
   }
 
   const url = `${options.orgUrl}/api/v1/agents/me/runs`;
+  const body = JSON.stringify(payloadOf(report));
+  const timestamp = Math.floor(Date.now() / 1000);
   let response;
   try {
     response = await fetch(url, {
@@ -787,8 +804,10 @@ async function submit(report) {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${options.token}`,
         'User-Agent': 'cybernorf-monitor/1.0',
+        'x-cybernorf-timestamp': String(timestamp),
+        'x-cybernorf-signature': signSubmission(options.token, timestamp, body),
       },
-      body: JSON.stringify(payloadOf(report)),
+      body,
       signal: AbortSignal.timeout(30_000),
     });
   } catch (error) {
@@ -800,26 +819,26 @@ async function submit(report) {
   }
 
   const text = await response.text();
-  let body = null;
+  let payload = null;
   if (text) {
     try {
-      body = JSON.parse(text);
+      payload = JSON.parse(text);
     } catch {
-      body = null;
+      payload = null;
     }
   }
 
   if (!response.ok) {
-    const message = body?.error?.message ?? `HTTP ${response.status}`;
+    const message = payload?.error?.message ?? `HTTP ${response.status}`;
     console.error(`monitor: submission rejected: ${message}`);
     return false;
   }
 
   log(
-    `Report accepted: run ${body?.run?.id ?? '(unknown)'} (${body?.counts?.checkCount ?? '?'} checks, ` +
-      `${body?.findingsCreated ?? 0} new findings, ${body?.findingsRefreshed ?? 0} refreshed, ` +
-      `${body?.findingsSuppressed ?? 0} already triaged, ` +
-      `${body?.inventoryCount ?? 0} packages, ${body?.advisoryMatches ?? 0} advisory matches).`,
+    `Report accepted: run ${payload?.run?.id ?? '(unknown)'} (${payload?.counts?.checkCount ?? '?'} checks, ` +
+      `${payload?.findingsCreated ?? 0} new findings, ${payload?.findingsRefreshed ?? 0} refreshed, ` +
+      `${payload?.findingsSuppressed ?? 0} already triaged, ` +
+      `${payload?.inventoryCount ?? 0} packages, ${payload?.advisoryMatches ?? 0} advisory matches).`,
   );
   return true;
 }

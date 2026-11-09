@@ -39,6 +39,7 @@ Compose publishes PostgreSQL on `POSTGRES_HOST_PORT` (default `5432`). If that p
 | `POSTGRES_HOST_PORT`            | Compose only            | Host port mapped to the PostgreSQL container.                                             |
 | `CRON_SECRET`                   | for alert sweep         | Bearer token the scheduler presents to `/api/cron/notifications`; 24+ chars.              |
 | `NOTIFY_ALLOW_PRIVATE_WEBHOOKS` | no                      | `true` allows alert destinations on loopback/private addresses (internal collector only). |
+| `AGENT_REQUIRE_SIGNED_RUNS`     | no                      | `true` refuses unsigned agent submissions; set it once every host runs a signing monitor. |
 
 If Prisma reports `P1001: Can't reach database server` while `nc -z 127.0.0.1 <port>` succeeds, replace `localhost` with `127.0.0.1` in the connection string. Some macOS setups resolve `localhost` to IPv6 first, where the container is not listening.
 
@@ -271,9 +272,54 @@ Matching happens when a run arrives, not when an advisory is imported:
 
 To pick up an advisory published after the last run, run the monitor again on that host.
 
-### Scheduling and rotation
+### Scheduling
 
-CyberNorf never initiates a scan, so schedule the monitor on the host itself, for example a `launchd` agent on macOS, a systemd timer on Linux, or a weekly cron entry on a hardened jump host. Tokens cannot be rotated in place: revoke the agent, register a replacement, and update the host's environment. Suspension is the reversible option when a host is being rebuilt.
+CyberNorf never initiates a scan, so schedule the monitor on the host itself, for example a `launchd` agent on macOS, a systemd timer on Linux, or a weekly cron entry on a hardened jump host. Suspension is the reversible option when a host is being rebuilt.
+
+### Token rotation and signed runs
+
+An owner can rotate an active agent's credential without losing its run history or check-to-control mappings:
+
+```sh
+curl -fsS -X POST https://cybernorf.example/api/v1/organizations/acme/agents/<agentId>/rotate \
+  -H 'content-type: application/json' --cookie "$SESSION" -d '{"note": "quarterly rotation"}'
+```
+
+The response carries the new token once; the previous token stops authenticating immediately, and the rotation is audited as `agent.token_rotated` with the previous and new prefixes. Update `CYBERNORF_AGENT_TOKEN` on the host before its next run.
+
+Every submission from `scripts/agent/monitor.mjs` is signed. The signature is the HMAC-SHA256 of `<unix seconds>.<raw body>` under a key derived from the agent token (`sha256("cybernorf-agent-signing:v1:" + token)`), sent as:
+
+```
+x-cybernorf-timestamp: 1762684800
+x-cybernorf-signature: sha256=<hex mac>
+```
+
+The server verifies a signature whenever one is present, against the exact bytes received, so a tampered or replayed body is refused even when signing is optional. A timestamp outside a five-minute window is rejected. Set `AGENT_REQUIRE_SIGNED_RUNS=true` to refuse unsigned submissions as well; do that after every host has been updated, because an unsigned report from an older copy of the monitor is rejected outright. Rotating the token also rotates the signing key.
+
+To sign from another runtime, for example an external agent written in Python:
+
+```python
+import hashlib, hmac, json, time, urllib.request
+
+body = json.dumps(report).encode("utf-8")
+ts = str(int(time.time()))
+key = hashlib.sha256(f"cybernorf-agent-signing:v1:{token}".encode()).digest()
+sig = "sha256=" + hmac.new(key, f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+
+request = urllib.request.Request(
+    f"{base}/api/v1/agents/me/runs",
+    data=body,
+    headers={
+        "content-type": "application/json",
+        "authorization": f"Bearer {token}",
+        "x-cybernorf-timestamp": ts,
+        "x-cybernorf-signature": sig,
+    },
+)
+urllib.request.urlopen(request, timeout=30)
+```
+
+The body must be signed before it is sent and must not be re-serialized afterwards, since JSON key order and spacing are part of the signature.
 
 ### Demo flow
 
@@ -284,7 +330,8 @@ CyberNorf never initiates a scan, so schedule the monitor on the host itself, fo
 5. Approve it as the owner (optionally narrowing scopes) and copy the token from the reveal; then suspend, resume, and revoke it from the detail page.
 6. Adopt a framework, then map the failing check on the agent page to a control; run the monitor again and open the control to see the evidence filed by the agent.
 7. On `/app/:orgSlug/settings`, add an alert destination pointing at a receiver that prints the signature headers, send a test, then set the agent's expected interval to 5 minutes, stop running the monitor, and watch the sweep raise `AGENT_OFFLINE` (see below).
-8. Open `/app/:orgSlug/advisories`, insert the sample entry, and run the monitor again: the installed package appears under **Software inventory** on the agent page with the matching identifier, and the findings list gains `<package> <version> is affected by <identifier>` linked to the host asset.
+8. Rotate the builtin agent's token from the detail page, copy the new value into `CYBERNORF_AGENT_TOKEN`, and run the monitor again: the run is accepted and the old token returns 401.
+9. Open `/app/:orgSlug/advisories`, insert the sample entry, and run the monitor again: the installed package appears under **Software inventory** on the agent page with the matching identifier, and the findings list gains `<package> <version> is affected by <identifier>` linked to the host asset.
 
 After adding a migration, apply it to the test database before running the suite:
 
@@ -352,6 +399,8 @@ The build requires `BETTER_AUTH_SECRET` to be a valid 32+ character value when `
 | `403 Cross-site requests are not allowed`            | `BETTER_AUTH_URL` does not match the origin in the browser address bar.                                                                                                                             |
 | Production start logs `Failed to prepare server`     | `BETTER_AUTH_URL` is not `https://` for a non-loopback host, or `DATABASE_URL` points at a remote database without `sslmode`. Fix the URL, not the check.                                           |
 | Prisma "Failed to deserialize column of type 'void'" | A raw query selected a `void` function result. Wrap advisory-lock calls in a subquery that returns a normal column.                                                                                 |
+| Agent run rejected with `401`                        | The body does not match its signature, or the timestamp is more than five minutes off. Let the host clock sync, and sign the exact bytes that are sent.                                             |
+| Every agent run rejected after rotation              | The host still holds the previous token. Copy the new one into `CYBERNORF_AGENT_TOKEN`.                                                                                                             |
 | An advisory matches no host                          | The ecosystem must be identical and the name must match the reported spelling; the version must fall inside `affectedRange`. Import does not scan retroactively: run the monitor on the host again. |
 | `422` importing advisories                           | The body must be `{ "advisories": [...] }` with `identifier`, `packageName`, `ecosystem`, `summary`, `severity`, and a readable `affectedRange`; the console page also accepts a bare array.        |
 | Audit verification reports `hash_mismatch`           | An audit row changed outside the application. The trigger blocks the normal path, so investigate direct database access; do not "repair" the row.                                                   |
