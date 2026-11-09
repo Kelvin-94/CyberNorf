@@ -48,6 +48,19 @@ jobs:
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
+      - name: Validate the production compose stack
+        # Static validation only: no images are built or started. It catches a
+        # broken stack file before a deployment host does.
+        env:
+          CYBERNORF_DOMAIN: cybernorf.example.com
+          ACME_EMAIL: ops@example.com
+          BETTER_AUTH_URL: https://cybernorf.example.com
+          BETTER_AUTH_SECRET: ci-only-placeholder-secret-not-for-deployment
+          POSTGRES_DB: cybernorf
+          POSTGRES_USER: cybernorf
+          POSTGRES_PASSWORD: ci-placeholder-password
+          DATABASE_URL: postgresql://cybernorf:ci-placeholder-password@database:5432/cybernorf?schema=public&sslmode=verify-full&sslrootcert=/etc/cybernorf/database-tls/server.crt
+        run: docker compose -f compose.prod.yaml config --quiet
       - name: Apply migrations to the primary database
         run: npm run db:migrate:deploy
       - name: Create the isolated test database

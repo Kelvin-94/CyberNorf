@@ -154,7 +154,7 @@ Operational history is separated from business records. An operator-run CLI (`np
 
 ### Known limitations of this phase
 
-- No CSP or document-level security headers; the headers listed above apply to API responses.
+- Document-level security headers (CSP, HSTS in production, `X-Frame-Options`, COOP, Permissions-Policy) come from `next.config.ts` for every route. The CSP still allows inline scripts, because Next.js emits its bootstrap script without a nonce; a nonce pipeline is on the roadmap.
 - No password reset, email verification, or invitation email flow. People must register before an owner or administrator can add them.
 - No file upload. Data leaves through `npm run data:export` (a per-organization JSON file, no credentials) rather than a console download. Compliance evidence links to existing findings, incidents, and assets, or to an external reference string; documents are not stored.
 - Rate-limit windows and derived history are pruned only by the operator-run `npm run data:retention`, never by a scheduler. That purge cannot remove audit events, and deleting a finding in the console still cascades to its `ControlEvidence` rows, so evidence must be exported first if it matters.
@@ -162,7 +162,7 @@ Operational history is separated from business records. An operator-run CLI (`np
 - No in-process background worker or job queue. Agents run on their own schedule (cron, `launchd`, Task Scheduler), and the platform never initiates a scan. Offline detection and webhook delivery depend on an external scheduler calling `/api/cron/notifications`; with no scheduler configured, alerts queue but are not retried.
 - Token rotation is manual and per agent: there is no rotation schedule, no overlap window (the previous token stops working immediately), and no alert when a token is about to expire.
 - Signature enforcement is opt-in per deployment. A deployment that leaves `AGENT_REQUIRE_SIGNED_RUNS` unset still accepts an unsigned but valid bearer token, so a leaked token can submit observations without knowing the signing key only until the flag is turned on.
-- The monitor's checks are a conservative baseline for Linux and macOS hosts; they are not a CIS benchmark, and no Windows-specific check is implemented.
+- The monitor's checks are a conservative baseline for Linux, macOS and Windows hosts; they are not a CIS benchmark. Windows coverage is limited to Defender state and signature age, SMBv1, RDP network-level authentication, the Guest account and update recency, and it is read through `powershell.exe` rather than a signed PowerShell script that would resist tampering.
 - The advisory feed is imported by hand (a JSON array or `{ "advisories": [...] }`); CyberNorf does not fetch NVD, OSV, or vendor feeds itself, so there is no scheduled sync and no automatic expiry of old entries. Matching happens on the next agent run, not at import.
 - Advisory matching compares exact package names within one ecosystem. It does not resolve dependency trees, distributions that rename packages, or kernel and driver versions, and a range that cannot be parsed matches nothing rather than everything.
 - The monitor collects `brew list --versions`, `npm ls -g --json`, `pip list`, `dpkg-query`, and `rpm -qa`. macOS applications installed as `.app` bundles (`pkgutil --pkgs`) are not collected, and the report is capped at 800 packages.
@@ -190,6 +190,10 @@ flowchart TD
 ```
 
 All boxes are target logical boundaries. They may be deployed differently, but their responsibilities should remain explicit.
+
+### Reference deployment
+
+`compose.prod.yaml` implements one supported topology: a Caddy reverse proxy that terminates TLS and is the only published service, one `app` container, a one-shot `migrate` container built from the same image, and PostgreSQL on an internal network. The database connection is verified TLS with a certificate generated on first boot, and the app runs unprivileged with a read-only root filesystem. The reasoning and the trade-offs are in [ADR 0004](decisions/0004-production-deployment.md); the operator steps are in [DEPLOYMENT.md](DEPLOYMENT.md). Managed hosting, multiple app instances, and high availability remain open.
 
 ## Component responsibilities
 
@@ -292,10 +296,11 @@ Accepted decisions:
 - [ADR 0001](decisions/0001-application-stack.md) — v1 application stack.
 - [ADR 0002](decisions/0002-identity-and-sessions.md) — identity, sessions, and second factors.
 - [ADR 0003](decisions/0003-authorization-and-audit.md) — capability authorization, tenant scoping, and tamper-evident audit.
+- [ADR 0004](decisions/0004-production-deployment.md) — single-host production deployment with a TLS proxy.
 
 The following deployment and product decisions remain open:
 
-- cloud-hosted, self-hosted, or hybrid deployment;
+- cloud-hosted or hybrid deployment (self-hosting is covered by ADR 0004);
 - single-tenant versus multi-tenant launch;
 - required integrations and data volume;
 - whether uploaded samples or security tools will execute in the platform;

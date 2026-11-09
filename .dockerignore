@@ -1,0 +1,29 @@
+# Build context for the production image. Keep it small and keep secrets out:
+# the Docker daemon receives everything that is not listed here.
+.git
+.github
+node_modules
+.next
+coverage
+*.log
+*.tsbuildinfo
+next-env.d.ts
+
+# Local environment files hold real credentials and must never enter a layer.
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Tests, docs and the operator scripts are not part of the runtime image. The
+# monitor and data scripts run on the host that owns the data, not in the app.
+tests
+docs
+CONTRIBUTING.md
+LICENSE
+SECURITY.md
+ROADMAP.md
+README.md
+
+# Local verification material that must never be baked into an image.
+deploy/postgres-tls
