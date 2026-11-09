@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { AuditActions, recordAuditEvent } from '@/server/audit/audit';
 import { forbidden, notFound, unauthenticated } from '@/server/errors';
 import { getRequestMeta, type RequestMeta } from '@/server/http/request-meta';
+import { resolveApiKeyUser } from './api-key';
 import { can, requiresSecondFactor, type Capability, type OrgRole } from './roles';
 
 export interface AuthenticatedUser {
@@ -11,7 +12,14 @@ export interface AuthenticatedUser {
   name: string;
   email: string;
   twoFactorEnabled: boolean;
-  sessionId: string;
+  /** Session id for cookie authentication; null when a personal API key was used. */
+  sessionId: string | null;
+  /**
+   * Set when the request presented a personal API key. The key is bound to one
+   * organization, and tenant resolution refuses any other organization even if
+   * the owner belongs to it.
+   */
+  apiKey: { id: string; organizationId: string } | null;
 }
 
 export interface TenantContext {
@@ -29,7 +37,17 @@ export interface TenantContext {
   meta: RequestMeta;
 }
 
+/**
+ * Resolves the caller from either a personal API key (Authorization: Bearer) or
+ * the Better Auth session cookie. A presented but unusable key throws instead of
+ * falling back to the cookie, so credentials are never silently mixed.
+ */
 export async function getAuthenticatedUser(headers: Headers): Promise<AuthenticatedUser | null> {
+  const apiKeyUser = await resolveApiKeyUser(headers);
+  if (apiKeyUser) {
+    return apiKeyUser;
+  }
+
   const result = await auth.api.getSession({ headers });
   if (!result) {
     return null;
@@ -41,6 +59,7 @@ export async function getAuthenticatedUser(headers: Headers): Promise<Authentica
     email: result.user.email,
     twoFactorEnabled: result.user.twoFactorEnabled === true,
     sessionId: result.session.id,
+    apiKey: null,
   };
 }
 
@@ -105,6 +124,13 @@ export async function requireTenantContext(
   });
 
   if (!organization) {
+    throw notFound('Organization not found.');
+  }
+
+  // A personal API key is issued for exactly one organization. Answering 404
+  // for any other tenant keeps the key from probing a second organization the
+  // owner happens to be a member of.
+  if (user.apiKey && user.apiKey.organizationId !== organization.id) {
     throw notFound('Organization not found.');
   }
 

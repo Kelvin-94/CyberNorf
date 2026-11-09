@@ -6,6 +6,12 @@ export const dynamic = 'force-dynamic';
 
 export const GET = withApi({}, async ({ meta, user }) => {
   const organizations = await listUserOrganizations(user.id);
+  // A personal API key speaks for one organization. Listing every membership
+  // would tell a script about tenants the key was never issued for, so the
+  // response is narrowed to the bound organization.
+  const visible = user.apiKey
+    ? organizations.filter((organization) => organization.id === user.apiKey?.organizationId)
+    : organizations;
 
   return jsonResponse(
     {
@@ -15,7 +21,7 @@ export const GET = withApi({}, async ({ meta, user }) => {
         email: user.email,
         twoFactorEnabled: user.twoFactorEnabled,
       },
-      organizations: organizations.map((organization) => ({
+      organizations: visible.map((organization) => ({
         id: organization.id,
         name: organization.name,
         slug: organization.slug,

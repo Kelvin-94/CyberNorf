@@ -61,6 +61,7 @@ export async function createUser(
     email: user.email,
     twoFactorEnabled: user.twoFactorEnabled === true,
     sessionId: `ses_${unique}`,
+    apiKey: null,
   };
 }
 

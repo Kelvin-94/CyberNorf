@@ -215,6 +215,7 @@ model User {
   createdCheckMaps  CheckControlMap[]       @relation("CheckMapCreatedBy")
   createdChannels   NotificationChannel[]   @relation("NotificationChannelCreatedBy")
   createdAdvisories Advisory[]              @relation("AdvisoryCreatedBy")
+  apiKeys           UserApiKey[]
 
   @@unique([email])
   @@map("user")
@@ -319,6 +320,7 @@ model Organization {
   notificationEvents   NotificationEvent[]
   advisories           Advisory[]
   softwareItems        SoftwareItem[]
+  apiKeys              UserApiKey[]
 
   @@map("organizations")
 }
@@ -732,6 +734,29 @@ model AuditEvent {
   @@index([organizationId, action])
   @@index([organizationId, targetType, targetId])
   @@map("audit_events")
+}
+
+/// Personal API key for the console API. The credential belongs to one user
+/// and is bound to one organization, so it can never read another tenant even
+/// if the owner is a member of several. Only the SHA-256 hash is stored; the
+/// plaintext value is shown once at creation.
+model UserApiKey {
+  id             String       @id @default(cuid())
+  name           String
+  keyHash        String       @unique
+  keyPrefix      String
+  userId         String
+  organizationId String
+  expiresAt      DateTime
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime     @default(now())
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([userId, organizationId])
+  @@index([organizationId])
+  @@map("user_api_keys")
 }
 
 /// Fixed-window counters for CyberNorf API rate limits (Better Auth keeps its
