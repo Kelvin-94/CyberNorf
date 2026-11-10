@@ -13,9 +13,9 @@ import { badRequest } from '@/server/errors';
  * with NOTIFY_ALLOW_PRIVATE_WEBHOOKS=true, which is a deliberate trust decision
  * recorded in the deployment notes.
  *
- * The address is re-resolved immediately before each delivery. That narrows but
- * does not eliminate DNS rebinding, so redirects are refused by the sender and
- * the receiver is expected to be a host the operator controls.
+ * The addresses returned here are the ones the sender dials. Handing them to
+ * the socket's resolver removes the second lookup that a DNS-rebinding attack
+ * relies on, and redirects are never followed.
  */
 
 export function allowPrivateWebhooks(): boolean {
@@ -117,11 +117,26 @@ export function isPrivateAddress(address: string): boolean {
   return true;
 }
 
+export interface ResolvedWebhookTarget {
+  url: URL;
+  /**
+   * Addresses that passed the policy check, in resolver order. The sender dials
+   * one of these directly; an empty list means "let the socket resolve" and is
+   * only possible when private destinations were explicitly allowed.
+   */
+  addresses: Array<{ address: string; family: number }>;
+}
+
+function hostOf(url: URL): string {
+  return url.hostname.replace(/^\[/, '').replace(/\]$/, '');
+}
+
 /**
- * Validates a webhook destination and returns the parsed URL. Throws a
- * BAD_REQUEST AppError with an operator-facing reason on any violation.
+ * Validates a webhook destination and resolves the addresses that may be
+ * dialled. Throws a BAD_REQUEST AppError with an operator-facing reason on any
+ * violation.
  */
-export async function assertSafeWebhookUrl(raw: string): Promise<URL> {
+export async function resolveWebhookTarget(raw: string): Promise<ResolvedWebhookTarget> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -139,27 +154,38 @@ export async function assertSafeWebhookUrl(raw: string): Promise<URL> {
   if (!url.hostname) {
     throw badRequest('The webhook URL must include a host.');
   }
-  if (allowPrivateWebhooks()) {
-    return url;
-  }
 
-  const host = url.hostname.replace(/^\[/, '').replace(/\]$/, '');
-  if (isIP(host)) {
-    if (isPrivateAddress(host)) {
+  const host = hostOf(url);
+  const literal = isIP(host);
+  if (literal) {
+    if (!allowPrivateWebhooks() && isPrivateAddress(host)) {
       throw badRequest('Webhook URLs must not target loopback, private, or reserved addresses.');
     }
-    return url;
+    return { url, addresses: [{ address: host, family: literal }] };
   }
 
-  let addresses: Array<{ address: string }>;
+  let addresses: Array<{ address: string; family: number }>;
   try {
     addresses = await lookup(host, { all: true, verbatim: true });
   } catch {
+    if (allowPrivateWebhooks()) {
+      // The operator opted into internal destinations, so fall back to letting
+      // the socket resolve rather than refusing a name only their resolver knows.
+      return { url, addresses: [] };
+    }
     throw badRequest('The webhook host could not be resolved.');
   }
-  if (addresses.length === 0 || addresses.some((record) => isPrivateAddress(record.address))) {
+  if (
+    !allowPrivateWebhooks() &&
+    (addresses.length === 0 || addresses.some((record) => isPrivateAddress(record.address)))
+  ) {
     throw badRequest('Webhook URLs must not resolve to loopback, private, or reserved addresses.');
   }
 
-  return url;
+  return { url, addresses };
+}
+
+/** Validates a webhook destination and returns the parsed URL. */
+export async function assertSafeWebhookUrl(raw: string): Promise<URL> {
+  return (await resolveWebhookTarget(raw)).url;
 }

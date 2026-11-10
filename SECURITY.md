@@ -10,10 +10,20 @@ The application expects TLS to be terminated in front of it and enforces the bou
 
 - A production build refuses to serve requests when `BETTER_AUTH_URL` is a plain-http origin on a non-loopback host, or when `DATABASE_URL` reaches a remote database without `sslmode`. The check runs from `src/instrumentation.ts` before the first request.
 - `src/proxy.ts` returns `308` to `https://` for any request that does not arrive with `x-forwarded-proto: https`, so a proxy misconfiguration cannot silently serve sessions in cleartext.
-- Every response carries HSTS (production), CSP, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` and a restrictive `Permissions-Policy`; the `X-Powered-By` banner is disabled.
+- Every response carries HSTS (production), a per-response CSP with a script nonce, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-origin`, `Origin-Agent-Cluster: ?1`, `X-Permitted-Cross-Domain-Policies: none`, `X-DNS-Prefetch-Control: off` and a restrictive `Permissions-Policy`; the `X-Powered-By` banner is disabled.
 - Session cookies are `HttpOnly`, `SameSite=Lax` and `Secure` in production, and the session cookie cache is disabled so server-side revocation takes effect immediately.
 
-Known gap: `script-src` still allows `'unsafe-inline'` because Next.js emits an inline bootstrap script without a nonce. Framing, plugins, `<base>` injection and cross-origin form posts are already blocked by the same policy.
+`script-src` carries a fresh 128-bit nonce per response and no `'unsafe-inline'`. `src/proxy.ts` builds the policy with `src/server/security/csp.ts` and sets it on both the request and the response, so Next.js stamps the same nonce onto the scripts it renders; a policy on the response alone would leave them blocked. `style-src` keeps `'unsafe-inline'` because React and Next write style attributes, which a nonce cannot cover and which cannot execute script. Framing, plugins, `<base>` injection and cross-origin form posts are blocked by the same policy.
+
+## Outbound webhooks
+
+A notification destination is an operator-supplied URL, so it is treated as a potential SSRF target. It must be an absolute https URL with no embedded credentials (plain http is accepted only outside production), and the host must not be, or resolve to, a loopback, private, link-local, multicast or documentation address. A deployment that genuinely needs an internal collector opts in with `NOTIFY_ALLOW_PRIVATE_WEBHOOKS=true`.
+
+The addresses that pass that check are handed to the delivery socket's resolver (`src/server/security/webhook-transport.ts`), so the name is never looked up a second time at connect time and a DNS record that changes between validation and delivery cannot point the request inward. Redirects are not followed and each delivery has a 5 second budget.
+
+## Dependencies and CI
+
+`npm audit --audit-level=low` gates every CI run, so any advisory in the runtime or build dependency tree fails the build rather than waiting for a high-severity threshold. Dependabot alerts, security updates and secret scanning with push protection are enabled on the repository, and CodeQL default setup scans pushes and pull requests. Every action in `.github/workflows/` is pinned to a full commit SHA with a version comment, and each job declares `permissions: contents: read`.
 
 ## Reporting a vulnerability
 

@@ -14,8 +14,13 @@ import {
   type NotificationEventType,
 } from '@/server/domain/notifications';
 import { AppError, conflict, notFound } from '@/server/errors';
-import { allowPrivateWebhooks, assertSafeWebhookUrl } from '@/server/security/outbound';
+import {
+  allowPrivateWebhooks,
+  assertSafeWebhookUrl,
+  resolveWebhookTarget,
+} from '@/server/security/outbound';
 import { openSecret, sealSecret } from '@/server/security/secrets';
+import { sendPinnedPost } from '@/server/security/webhook-transport';
 import { isUniqueConstraintError } from '@/server/services/shared';
 import type { CreateNotificationChannelInput } from '@/server/validation/notifications';
 
@@ -359,8 +364,10 @@ async function deliverEvent(
   let error: string | null = null;
   try {
     // Re-validated at delivery time, not only at creation: DNS can change
-    // between the two, and a stored URL must not bypass the current policy.
-    const target = await assertSafeWebhookUrl(channel.url);
+    // between the two, and a stored URL must not bypass the current policy. The
+    // addresses resolved here are the ones the transport dials, so the name is
+    // never resolved a second time (no DNS-rebinding window).
+    const target = await resolveWebhookTarget(channel.url);
     const secret = openSecret(channel.secretSealed);
     const timestamp = String(Math.floor(Date.now() / 1000));
     const body = JSON.stringify({
@@ -372,8 +379,7 @@ async function deliverEvent(
     });
     const signature = signDelivery(secret, timestamp, body);
 
-    const response = await fetch(target, {
-      method: 'POST',
+    const status = await sendPinnedPost(target.url, target.addresses, {
       headers: {
         'content-type': 'application/json',
         'user-agent': 'CyberNorf-Webhook/1.0',
@@ -383,16 +389,11 @@ async function deliverEvent(
         'x-cybernorf-signature': `sha256=${signature}`,
       },
       body,
-      redirect: 'error',
-      cache: 'no-store',
-      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+      timeoutMs: DELIVERY_TIMEOUT_MS,
     });
 
-    // The response body is irrelevant; draining it frees the socket.
-    await response.body?.cancel().catch(() => undefined);
-
-    if (!response.ok) {
-      error = `The endpoint answered HTTP ${response.status}.`;
+    if (status < 200 || status >= 300) {
+      error = `The endpoint answered HTTP ${status}.`;
     }
   } catch (caught) {
     error = describeError(caught);
