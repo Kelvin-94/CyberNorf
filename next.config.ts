@@ -37,6 +37,12 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  images: {
+    // The optimizer rejects SVG by default, and an attacker-supplied SVG is a
+    // script container once a browser renders it in place. Stated explicitly so
+    // the protection cannot be lost to a copied config snippet.
+    dangerouslyAllowSVG: false,
+  },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
   },
