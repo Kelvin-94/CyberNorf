@@ -120,7 +120,7 @@ The stack ships with password sign-in and can additionally delegate authenticati
 Notes that matter during an incident:
 
 - Set all three of `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`, or none. A partial set stops the app at startup instead of serving a login method the operator did not intend.
-- Discovery (`<issuer>/.well-known/openid-configuration`) is fetched by the app, so the container needs egress to the provider. The `edge` network the app shares with the proxy provides it; the `backend` network stays internal. If the provider is down when the app starts, SSO is unavailable until the next sign-in attempt retries discovery; passwords still work.
+- Discovery (`<issuer>/.well-known/openid-configuration`) is fetched by the app, so the container needs egress to the provider. The `edge` network the app shares with the proxy provides it; the `backend` network stays internal. The fetch is bounded to five seconds at startup and on the sign-in retry, so an unresponsive provider cannot hang the first request: if it is down when the app starts, SSO is unavailable until the next sign-in attempt retries discovery, and passwords still work.
 - An IdP user whose verified email matches an existing CyberNorf account is signed in as that account, with its existing memberships. Unverified addresses are refused, and no role or organization is ever taken from a token claim.
 - Removing a user from the provider does not remove the CyberNorf account or its sessions. Deactivate the membership in the console as well.
 

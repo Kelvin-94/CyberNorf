@@ -2,6 +2,7 @@ import { betterAuth, type ValidateUserInfoSource } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { genericOAuth, twoFactor } from 'better-auth/plugins';
 import { prisma } from '@/lib/prisma';
+import { boundDiscoveryFetch } from '@/server/auth/discovery-fetch';
 import { OIDC_PROVIDER_ID, oidcEmailClaimRejection, readOidcSettings } from '@/server/auth/oidc';
 import { getAuthSecret, isProduction } from '@/server/config';
 
@@ -13,6 +14,12 @@ const production = isProduction();
  * boots with a silently disabled login.
  */
 const oidc = readOidcSettings();
+
+// The plugin fetches discovery without a timeout while it initialises, so the
+// request is bounded at the fetch layer before the instance is created.
+if (oidc) {
+  boundDiscoveryFetch(oidc.discoveryUrl);
+}
 
 /**
  * Better Auth is the identity provider for CyberNorf. It owns credentials,
