@@ -14,7 +14,7 @@ updates:
       # The runtime is Node 24 (CI and the deploy image), so the type package
       # must stay on the same major: @types/node 26 describes APIs that Node 24
       # does not provide. Move both together when the runtime is upgraded.
-      - dependency-name: "@types/node"
+      - dependency-name: '@types/node'
         update-types:
           - version-update:semver-major
   - package-ecosystem: github-actions
