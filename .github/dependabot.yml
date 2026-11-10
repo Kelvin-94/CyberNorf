@@ -4,6 +4,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # typescript-eslint 8.x peers on typescript ^5, so the updater cannot
+      # resolve a TypeScript 7 tree and fails the whole job. Revisit when
+      # typescript-eslint ships TypeScript 7 support.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
   - package-ecosystem: github-actions
     directory: /
     schedule:
