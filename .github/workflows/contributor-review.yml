@@ -1,0 +1,147 @@
+name: Contributor review
+
+# Runs on the base revision and never installs or executes pull-request code.
+# `pull_request` (not `pull_request_target`) keeps fork pull requests from
+# receiving repository secrets; the write-scoped token is only used to publish
+# the review comment and is downgraded to read-only for forks.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contributor-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Contributor risk review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      # A pull request must not be able to weaken the gate that reviews it.
+      # The repository owner can still evolve the workflow in a reviewed change.
+      - name: Verify this gate was not modified by the pull request
+        if: github.event.pull_request.user.login != github.repository_owner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api "repos/$REPO/contents/.github/workflows/contributor-review.yml?ref=$HEAD_SHA" \
+            --jq .content | base64 -d > "$RUNNER_TEMP/head-workflow.yml"
+          if ! cmp -s .github/workflows/contributor-review.yml "$RUNNER_TEMP/head-workflow.yml"; then
+            echo "The contributor-review workflow was modified by this pull request." >&2
+            echo "A maintainer must review and merge that change separately." >&2
+            exit 1
+          fi
+
+      - name: Inspect the proposed diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -u
+
+          # The pull request that introduces this gate cannot be reviewed by it:
+          # the analyzer does not exist on the base revision. Only the repository
+          # owner may bootstrap it, and the report says so explicitly. Every later
+          # pull request is evaluated against the trusted copy on the base branch.
+          if [ ! -f scripts/security/contributor-risk.mjs ]; then
+            if [ "$PR_AUTHOR" != "$REPO_OWNER" ]; then
+              echo "The contributor-risk analyzer is missing from the base revision." >&2
+              exit 1
+            fi
+            printf '%s\n' \
+              '<!-- cybernorf-contributor-risk -->' \
+              '## Contributor risk review' \
+              '' \
+              '**Verdict: BOOTSTRAP** — this pull request introduces the gate, so the diff was not evaluated. Later pull requests are evaluated against the trusted copy on the base branch.' \
+              > "$RUNNER_TEMP/report.md"
+            printf '%s\n' '{"verdict":"bootstrap","counts":{"high":0,"medium":0,"low":0},"total":0,"findings":[]}' \
+              > "$RUNNER_TEMP/report.json"
+            echo "RISK_STATUS=0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          gh pr diff "$PR_NUMBER" --repo "$REPO" > "$RUNNER_TEMP/pr.diff"
+          status=0
+          node scripts/security/contributor-risk.mjs "$RUNNER_TEMP/pr.diff" \
+            --markdown "$RUNNER_TEMP/report.md" \
+            --json "$RUNNER_TEMP/report.json" || status=$?
+          echo "RISK_STATUS=${status:-2}" >> "$GITHUB_ENV"
+
+      - name: Add contributor history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -u
+          author=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.user.login')
+          association=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.author_association')
+          created=$(gh api "users/$author" --jq '.created_at')
+          public_repos=$(gh api "users/$author" --jq '.public_repos')
+          age_days=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 86400 ))
+          if [ "$age_days" -lt 30 ]; then
+            note="New account: review identity and intent before merging."
+          else
+            note="Account age is above the 30-day review threshold."
+          fi
+          {
+            echo ""
+            echo "### Contributor"
+            echo ""
+            echo "| Login | Association | Account age | Public repositories |"
+            echo "|---|---|---|---|"
+            echo "| @$author | $association | ${age_days}d | $public_repos |"
+            echo ""
+            echo "$note"
+          } >> "$RUNNER_TEMP/report.md"
+
+      - name: Publish the review
+        # Fork pull requests receive a read-only token. The verdict still runs
+        # and is reported through the check; only the comment is skipped.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -u
+          comment_id=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+            --jq '.[] | select(.body | startswith("<!-- cybernorf-contributor-risk -->")) | .id' | head -n 1)
+          if [ -n "$comment_id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" \
+              -F body=@"$RUNNER_TEMP/report.md" > /dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" \
+              -F body=@"$RUNNER_TEMP/report.md" > /dev/null
+          fi
+
+      - name: Upload the review artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: contributor-risk-${{ github.event.pull_request.number }}
+          path: |
+            ${{ runner.temp }}/report.md
+            ${{ runner.temp }}/report.json
+          retention-days: 30
+
+      - name: Enforce the verdict
+        if: always()
+        run: exit "${RISK_STATUS:-2}"

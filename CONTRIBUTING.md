@@ -31,9 +31,26 @@ Include tests for new behavior and regression tests for fixed bugs. Update docum
 - Do not add functionality intended for unauthorized access, destructive attacks, indiscriminate targeting, or stealthy persistence.
 - Add tests for denied access, invalid scope, expired authorization, and failure conditions where relevant.
 
+## Review and provenance controls
+
+`main` is protected by an active ruleset. Every change reaches it through a
+pull request, with linear history and either a squash or rebase merge. Direct
+pushes and force pushes are rejected.
+
+- **Signed commits are required.** Configure Git to sign your commits (`git config commit.gpgsign true` with a registered GPG, SSH, or S/MIME key). Commits created by GitHub's squash-merge are signed by GitHub.
+- **Code owners are recorded in `.github/CODEOWNERS`.** Review from the owner becomes mandatory once a second maintainer is appointed; the repository owner cannot approve their own pull request, so self-authored changes rely on the automated gates described here.
+- **Every pull request runs `Contributor risk review`.** The check reads the proposed diff on the base revision without installing or executing pull-request code. It blocks remote script execution, encoded payloads, dynamic code evaluation, obfuscation, committed credentials, binary artifacts, `write-all` workflow permissions, `pull_request_target`, secrets interpolated into shell steps, install-time lifecycle scripts, dependencies resolved outside the npm registry, and removal of existing security steps (audit, secret scan, credential persistence).
+- **Medium findings are advisory, not blocking.** Modified workflows, unpinned action tags, new dependencies, and child-process use are reported to the reviewer with file and line evidence. Resolve or justify them in the pull request.
+- **The gate cannot be weakened from outside.** A pull request that modifies the review workflow fails that workflow unless it is authored by the repository owner, so an external contributor cannot disable the check that inspects their own change.
+- **Contributor context is attached to every review.** The bot comment records the author's association, account age, and public repository count; accounts younger than 30 days are flagged for identity review.
+- **False positives need a written rationale.** A maintainer who overrides a high-severity finding must record why in the pull request. Do not add patterns to an ignore list to make a red check green.
+
+Report a suspected vulnerability through the process in [SECURITY.md](SECURITY.md)
+rather than in a public issue or pull request.
+
 ## Development quality
 
-Follow the formatting, linting, test, and build commands documented by the relevant package. If these have not yet been established, propose a reproducible toolchain and add the commands to the project documentation.
+Follow the formatting, linting, test, and build commands documented in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Every pull request must pass `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` before it is merged.
 
 ## Licensing
 

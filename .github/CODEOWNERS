@@ -1,0 +1,13 @@
+# Default owner for every path. Code owner review becomes mandatory as soon as a
+# second maintainer is available; until then the owner-authored pull requests are
+# still gated by signed commits and the "Contributor risk review" check.
+* @Kelvin-94
+
+# Security-sensitive surfaces are listed explicitly so a future CODEOWNERS
+# expansion cannot accidentally leave them uncovered.
+/.github/ @Kelvin-94
+/src/server/authz/ @Kelvin-94
+/src/server/security/ @Kelvin-94
+/src/server/audit/ @Kelvin-94
+/prisma/ @Kelvin-94
+/scripts/security/ @Kelvin-94
