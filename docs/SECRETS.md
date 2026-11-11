@@ -96,8 +96,8 @@ just "change the value and restart".
 4. **Stop the app.** A rolling restart is not safe here: two instances with
    different secrets would reject each other's sessions mid-flight.
 5. **Generate and set the new secret.** With a mounted secrets directory, use
-   `npm run secrets:rotate -- --name BETTER_AUTH_SECRET --apply`, which writes the
-   file atomically with mode `0600` and does not print the value. Otherwise
+   `npm run secrets:rotate -- --name BETTER_AUTH_SECRET --dir /run/secrets/cybernorf --apply`,
+   which writes the file atomically with mode `0600` and does not print the value. Otherwise
    `openssl rand -base64 48` into the deployment's secret store and the process
    environment. Never into the repository.
 6. **Recover second factors.** For each user from step 2, delete the stale row so
@@ -129,7 +129,8 @@ could mint valid sessions for any account.
 The sweep endpoint compares the bearer token in constant time and fails closed
 when `CRON_SECRET` is unset. Rotation has no lasting effect:
 
-1. Generate a new value: `npm run secrets:rotate -- --name CRON_SECRET --apply`, or
+1. Generate a new value:
+   `npm run secrets:rotate -- --name CRON_SECRET --dir /run/secrets/cybernorf --apply`, or
    `openssl rand -base64 32` where secrets are plain environment variables.
 2. Update the deployment environment and the scheduler's credential.
 3. Restart the app and the scheduler together; a mismatched pair simply returns
@@ -181,14 +182,14 @@ process table.
 `SECRETS_DIR` names one absolute directory. Each variable is one file whose name
 is the variable name (`src/server/config/secrets-file.ts`):
 
-| Behaviour | Rule |
-| --- | --- |
-| Apply order | Files are loaded at startup **before** validation, so the validator sees the effective value |
-| Precedence | A file **wins over** the environment, so mounting a file and leaving the old variable in place is a safe migration |
-| Allow-list | Only the variables in `FILE_SECRET_VARIABLES` are read; any other file is reported as ignored, never applied |
-| Permissions | A file with any group or world permission bit is refused, and startup fails |
-| Whitespace | One trailing newline and surrounding whitespace are stripped |
-| Failure | An unreadable or empty file is a startup error, never a silent fallback to the environment |
+| Behaviour   | Rule                                                                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------------------------ |
+| Apply order | Files are loaded at startup **before** validation, so the validator sees the effective value                       |
+| Precedence  | A file **wins over** the environment, so mounting a file and leaving the old variable in place is a safe migration |
+| Allow-list  | Only the variables in `FILE_SECRET_VARIABLES` are read; any other file is reported as ignored, never applied       |
+| Permissions | A file with any group or world permission bit is refused, and startup fails                                        |
+| Whitespace  | One trailing newline and surrounding whitespace are stripped                                                       |
+| Failure     | An unreadable or empty file is a startup error, never a silent fallback to the environment                         |
 
 The startup log names the variables resolved from files (`secretsFromFiles`), so
 "did the mount take effect" is answerable without exposing a value.
@@ -197,11 +198,15 @@ Rotating a mounted secret:
 
 ```bash
 # validates and prints the plan; writes nothing
-npm run secrets:rotate -- --name CRON_SECRET
+npm run secrets:rotate -- --name CRON_SECRET --dir /run/secrets/cybernorf
 
-# writes <SECRETS_DIR>/CRON_SECRET with mode 0600, atomically, value not printed
-npm run secrets:rotate -- --name CRON_SECRET --apply
+# writes <dir>/CRON_SECRET with mode 0600, atomically, value not printed
+npm run secrets:rotate -- --name CRON_SECRET --dir /run/secrets/cybernorf --apply
 ```
+
+The directory is an argument rather than a read of `SECRETS_DIR` on purpose: a
+command that can replace a mounted secret should name its target explicitly
+instead of inheriting whatever the calling shell happens to export.
 
 `BETTER_AUTH_SECRET`, `CRON_SECRET` and `OIDC_CLIENT_SECRET` can be generated this
 way; `DATABASE_URL` cannot, because rotating it needs a matching change in

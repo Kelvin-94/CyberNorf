@@ -129,13 +129,16 @@ function readSourceTarget(): SourceTarget {
   }
 
   const sslmode = url.searchParams.get('sslmode');
+  const certPath = url.searchParams.get('sslrootcert');
   let ssl: SourceTarget['ssl'];
   if (sslmode === 'disable') {
     ssl = false;
-  } else if (sslmode === 'require' || sslmode === 'allow') {
-    ssl = { rejectUnauthorized: false };
-  } else if (sslmode === 'verify-ca' || sslmode === 'verify-full') {
-    const certPath = url.searchParams.get('sslrootcert');
+  } else if (sslmode) {
+    // Every encrypting mode verifies the server certificate, `require`
+    // included: current `pg` releases treat it as `verify-full` (ADR 0004), and
+    // a drill that accepted any certificate would not prove the production path
+    // works. A database with a self-signed certificate needs `sslrootcert`
+    // pointing at its CA, exactly as the deployment does.
     ssl = certPath
       ? { ca: readFileSync(certPath), rejectUnauthorized: true }
       : { rejectUnauthorized: true };

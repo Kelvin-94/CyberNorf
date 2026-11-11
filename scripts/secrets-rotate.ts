@@ -57,7 +57,11 @@ function parseArgs(argv: string[]): {
   force: boolean;
 } {
   let name: string | null = null;
-  let dir: string | null = process.env.SECRETS_DIR?.trim() || null;
+  // Deliberately not defaulted from SECRETS_DIR: a command that can overwrite a
+  // mounted secret should name its target explicitly rather than inherit an
+  // ambient directory, and the path it prints then cannot be mistaken for a
+  // value that came from the environment.
+  let dir: string | null = null;
   let apply = false;
   let force = false;
 
@@ -98,7 +102,7 @@ function parseArgs(argv: string[]): {
     );
   }
   if (!dir) {
-    usage('--dir is required when SECRETS_DIR is not set.');
+    usage('--dir is required: name the directory that holds the secret files.');
   }
   if (!isAbsolute(dir)) {
     usage('--dir must be an absolute path.');
@@ -158,8 +162,12 @@ function main(): void {
   console.log('  2. restart the service and confirm startup logs:');
   console.log(`     - secretsFromFiles includes "${options.name}"`);
   console.log('     - configFingerprint.status is "CHANGED" (or "NEW" on first boot)');
-  console.log('  3. exercise the affected path end to end (sign-in, scheduler call, provider login)');
-  console.log('  4. record what changed and when in the change log; docs/SECRETS.md lists the blast radius');
+  console.log(
+    '  3. exercise the affected path end to end (sign-in, scheduler call, provider login)',
+  );
+  console.log(
+    '  4. record what changed and when in the change log; docs/SECRETS.md lists the blast radius',
+  );
 }
 
 try {
