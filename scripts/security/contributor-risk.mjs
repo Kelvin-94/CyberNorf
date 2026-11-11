@@ -161,6 +161,10 @@ const LINE_RULES = [
     severity: 'high',
     title: 'Security-relevant line removed from a workflow',
     checkRemoved: true,
+    // The rule exists so a pull request cannot delete a security step out of
+    // CI. Documentation and source files mention the same commands for
+    // legitimate reasons, so the rule only applies where it claims to.
+    appliesTo: (file) => file.startsWith('.github/workflows/'),
     test: (line) => /(?:npm audit|gitleaks|secret-scan|persist-credentials:\s*false)/.test(line),
   },
 ];
@@ -331,6 +335,9 @@ export function analyzeChanges({ added, removed, files }) {
       if (rule.checkRemoved) {
         continue;
       }
+      if (rule.appliesTo && !rule.appliesTo(change.file)) {
+        continue;
+      }
       if (rule.test(change.text, change.file)) {
         push(finding(rule, change.file, change.line, change.text));
       }
@@ -355,6 +362,9 @@ export function analyzeChanges({ added, removed, files }) {
   for (const change of removed) {
     for (const rule of LINE_RULES) {
       if (!rule.checkRemoved) {
+        continue;
+      }
+      if (rule.appliesTo && !rule.appliesTo(change.file)) {
         continue;
       }
       if (rule.test(change.text, change.file)) {
