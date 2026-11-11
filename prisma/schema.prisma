@@ -29,6 +29,82 @@ enum MembershipStatus {
   DISABLED
 }
 
+/// What an inventory identity represents. HUMAN identities are people (linked to
+/// a platform account when one exists); every other value is a non-human
+/// workload, device or service credential. The identity inventory is separate
+/// from Better Auth: a person can be recorded before they are invited, and a
+/// device never becomes a console user.
+enum IdentityKind {
+  HUMAN
+  MACHINE
+}
+
+enum IdentityType {
+  USER
+  SERVICE_ACCOUNT
+  MONITORING_AGENT
+  API_CLIENT
+  SERVER
+  NETWORK_DEVICE
+  IOT_DEVICE
+  CONTAINER
+  OTHER
+}
+
+/// Inventory lifecycle. MACHINE identities must be ACTIVE to authenticate.
+/// DEPROVISIONED is terminal for both kinds.
+enum IdentityStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+  DEPROVISIONED
+}
+
+/// How the record entered the inventory. Connector-driven sources (SCIM, OIDC,
+/// agent discovery) are deliberately absent until such a connector exists.
+enum IdentitySource {
+  MANUAL
+  IMPORT
+}
+
+enum IdentityCriticality {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+/// Append-only identity history. Kept separate from the organization audit chain
+/// so the inventory can show an object-level timeline without duplicating the
+/// compliance record.
+enum IdentityEventType {
+  CREATED
+  UPDATED
+  OWNER_ASSIGNED
+  SUBMITTED_FOR_APPROVAL
+  APPROVED
+  SUSPENDED
+  REACTIVATED
+  DEPROVISIONED
+  CREDENTIAL_ISSUED
+  CREDENTIAL_REVOKED
+  ACCESS_REVOKED
+}
+
+/// A review snapshots active memberships when it is created. There is no DRAFT
+/// state: a saved review is already actionable and has a due date.
+enum AccessReviewStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum AccessReviewDecision {
+  PENDING
+  RETAIN
+  REVOKE
+}
+
 enum AssetType {
   DOMAIN
   IP_ADDRESS
@@ -118,6 +194,49 @@ enum EvidenceKind {
   INCIDENT
   ASSET
   REFERENCE
+  FILE
+}
+
+/// Result of the last attempt to re-hash a stored artifact. UNVERIFIED means it
+/// has been written but not re-read, which is the state right after upload.
+enum EvidenceIntegrity {
+  UNVERIFIED
+  INTACT
+  MISMATCH
+  MISSING
+}
+
+/// Kind of indicator of compromise. Values are normalised before storage, so a
+/// domain is lower-case and a hash is lower-case hex; see domain/indicators.ts.
+enum IndicatorType {
+  IPV4
+  IPV6
+  DOMAIN
+  URL
+  SHA256
+  MD5
+  EMAIL
+}
+
+enum IndicatorStatus {
+  ACTIVE
+  EXPIRED
+  FALSE_POSITIVE
+}
+
+/// How the value came to be known. MANUAL is an operator typing it in; IMPORT
+/// is a feed or file, which is why provenance columns are mandatory for both.
+enum IndicatorSourceKind {
+  MANUAL
+  IMPORT
+}
+
+/// OBSERVED means the indicator was seen in telemetry; REFERENCED means it is
+/// merely cited by the linked record. Keeping them apart stops a citation from
+/// reading as a sighting during an investigation.
+enum IndicatorRelation {
+  OBSERVED
+  REFERENCED
 }
 
 enum AuditOutcome {
@@ -187,36 +306,46 @@ enum NotificationStatus {
 // ---------------------------------------------------------------------------
 
 model User {
-  id                String                  @id
-  name              String
-  email             String
-  emailVerified     Boolean                 @default(false)
-  image             String?
-  createdAt         DateTime                @default(now())
-  updatedAt         DateTime                @updatedAt
-  twoFactorEnabled  Boolean?                @default(false)
-  sessions          Session[]
-  accounts          Account[]
-  twofactors        TwoFactor[]
-  memberships       Membership[]
-  createdAssets     Asset[]                 @relation("AssetCreatedBy")
-  createdFindings   Finding[]               @relation("FindingCreatedBy")
-  assignedFindings  Finding[]               @relation("FindingAssignedTo")
-  createdIncidents  Incident[]              @relation("IncidentCreatedBy")
-  assignedIncidents Incident[]              @relation("IncidentAssignedTo")
-  incidentNotes     IncidentNote[]
-  auditEvents       AuditEvent[]
-  authEvents        AuthEvent[]
-  ownedControls     OrganizationControl[]   @relation("ControlOwner")
-  updatedControls   OrganizationControl[]   @relation("ControlUpdatedBy")
-  controlEvidence   ControlEvidence[]       @relation("EvidenceCreatedBy")
-  adoptedFrameworks OrganizationFramework[] @relation("FrameworkAdoptedBy")
-  createdAgents     Agent[]                 @relation("AgentCreatedBy")
-  approvedAgents    Agent[]                 @relation("AgentApprovedBy")
-  createdCheckMaps  CheckControlMap[]       @relation("CheckMapCreatedBy")
-  createdChannels   NotificationChannel[]   @relation("NotificationChannelCreatedBy")
-  createdAdvisories Advisory[]              @relation("AdvisoryCreatedBy")
-  apiKeys           UserApiKey[]
+  id                    String                  @id
+  name                  String
+  email                 String
+  emailVerified         Boolean                 @default(false)
+  image                 String?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  twoFactorEnabled      Boolean?                @default(false)
+  sessions              Session[]
+  accounts              Account[]
+  twofactors            TwoFactor[]
+  memberships           Membership[]
+  createdAssets         Asset[]                 @relation("AssetCreatedBy")
+  createdFindings       Finding[]               @relation("FindingCreatedBy")
+  assignedFindings      Finding[]               @relation("FindingAssignedTo")
+  createdIncidents      Incident[]              @relation("IncidentCreatedBy")
+  assignedIncidents     Incident[]              @relation("IncidentAssignedTo")
+  incidentNotes         IncidentNote[]
+  auditEvents           AuditEvent[]
+  authEvents            AuthEvent[]
+  ownedControls         OrganizationControl[]   @relation("ControlOwner")
+  updatedControls       OrganizationControl[]   @relation("ControlUpdatedBy")
+  controlEvidence       ControlEvidence[]       @relation("EvidenceCreatedBy")
+  adoptedFrameworks     OrganizationFramework[] @relation("FrameworkAdoptedBy")
+  createdAgents         Agent[]                 @relation("AgentCreatedBy")
+  approvedAgents        Agent[]                 @relation("AgentApprovedBy")
+  createdCheckMaps      CheckControlMap[]       @relation("CheckMapCreatedBy")
+  createdChannels       NotificationChannel[]   @relation("NotificationChannelCreatedBy")
+  createdAdvisories     Advisory[]              @relation("AdvisoryCreatedBy")
+  apiKeys               UserApiKey[]
+  createdIdentities     Identity[]              @relation("IdentityCreatedBy")
+  ownedIdentities       Identity[]              @relation("IdentityOwner")
+  linkedIdentities      Identity[]              @relation("IdentityLinkedUser")
+  approvedIdentities    Identity[]              @relation("IdentityApprovedBy")
+  identityEvents        IdentityEvent[]         @relation("IdentityEventActor")
+  identityCredentials   IdentityCredential[]    @relation("IdentityCredentialCreatedBy")
+  createdAccessReviews  AccessReview[]          @relation("AccessReviewCreatedBy")
+  accessReviewDecisions AccessReviewItem[]      @relation("AccessReviewDecidedBy")
+  createdIndicators     Indicator[]             @relation("IndicatorCreatedBy")
+  createdIndicatorLinks IndicatorLink[]         @relation("IndicatorLinkCreatedBy")
 
   @@unique([email])
   @@map("user")
@@ -322,20 +451,29 @@ model Organization {
   advisories           Advisory[]
   softwareItems        SoftwareItem[]
   apiKeys              UserApiKey[]
+  identities           Identity[]
+  identityCredentials  IdentityCredential[]
+  identityEvents       IdentityEvent[]
+  accessReviews        AccessReview[]
+  accessReviewItems    AccessReviewItem[]
+  indicators           Indicator[]
+  indicatorLinks       IndicatorLink[]
+  quota                OrganizationQuota?
 
   @@map("organizations")
 }
 
 model Membership {
-  id             String           @id @default(cuid())
+  id             String             @id @default(cuid())
   userId         String
   organizationId String
   role           OrgRole
-  status         MembershipStatus @default(ACTIVE)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  status         MembershipStatus   @default(ACTIVE)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  reviewItems    AccessReviewItem[]
 
   @@unique([userId, organizationId])
   @@index([organizationId, role])
@@ -400,6 +538,7 @@ model Finding {
   assignedTo      User?             @relation("FindingAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
   agent           Agent?            @relation(fields: [agentId], references: [id], onDelete: SetNull)
   controlEvidence ControlEvidence[]
+  indicatorLinks  IndicatorLink[]
 
   @@unique([organizationId, fingerprint])
   @@index([organizationId, status])
@@ -431,6 +570,7 @@ model Incident {
   notes           IncidentNote[]
   findings        Finding[]
   controlEvidence ControlEvidence[]
+  indicatorLinks  IndicatorLink[]
 
   @@index([organizationId, status])
   @@index([organizationId, severity])
@@ -559,8 +699,26 @@ model ControlEvidence {
   asset                 Asset?              @relation(fields: [assetId], references: [id], onDelete: Cascade)
   createdBy             User                @relation("EvidenceCreatedBy", fields: [createdById], references: [id])
 
+  /// File-backed evidence. `blobKey` is relative to EVIDENCE_DIR and is never
+  /// built from user input, only from the generated evidence id. `sha256` is
+  /// computed while streaming the upload, and `integrityStatus` records the
+  /// last time the stored bytes were re-read and compared.
+  fileName           String?
+  contentType        String?
+  sizeBytes          Int?
+  sha256             String?
+  blobKey            String?
+  /// When the artifact was produced, as stated by the uploader. Distinct from
+  /// createdAt, which is when it reached the platform.
+  capturedAt         DateTime?
+  integrityStatus    EvidenceIntegrity @default(UNVERIFIED)
+  integrityCheckedAt DateTime?
+
   @@index([organizationControlId, createdAt])
   @@index([organizationId])
+  /// Supports the integrity sweep, which looks for artifacts that have never
+  /// been re-read or that failed verification.
+  @@index([organizationId, integrityStatus])
   @@map("control_evidence")
 }
 
@@ -584,6 +742,161 @@ model CheckControlMap {
   @@index([organizationId, checkId])
   @@index([organizationControlId])
   @@map("check_control_maps")
+}
+
+// ---------------------------------------------------------------------------
+// Identity inventory and access recertification
+// ---------------------------------------------------------------------------
+
+/// Tenant-scoped inventory of human and non-human identities. This is the
+/// governance record, not the authentication store: Better Auth owns console
+/// users, while this row records what exists, who owns it and whether it should
+/// still exist. `identifier` is canonicalized (trimmed, lower-cased) so
+/// `svc-backup` and `SVC-BACKUP` cannot become two inventory entries.
+model Identity {
+  id                String               @id @default(cuid())
+  organizationId    String
+  kind              IdentityKind
+  type              IdentityType
+  displayName       String
+  identifier        String
+  description       String?
+  department        String?
+  criticality       IdentityCriticality  @default(MEDIUM)
+  status            IdentityStatus       @default(ACTIVE)
+  source            IdentitySource       @default(MANUAL)
+  /// Scopes granted to machine credentials. Human identities keep this empty.
+  approvedScopes    String[]             @default([])
+  /// Accountable person for a non-human identity; optional for humans, where
+  /// `department` is the governance grouping.
+  ownerUserId       String?
+  /// Set only for HUMAN identities that correspond to a platform account.
+  linkedUserId      String?
+  /// Machine credential lifetime applied to newly issued credentials.
+  credentialTtlDays Int                  @default(90)
+  lastSeenAt        DateTime?
+  createdById       String
+  approvedById      String?
+  approvedAt        DateTime?
+  suspendedAt       DateTime?
+  deprovisionedAt   DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner             User?                @relation("IdentityOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  linkedUser        User?                @relation("IdentityLinkedUser", fields: [linkedUserId], references: [id], onDelete: SetNull)
+  createdBy         User                 @relation("IdentityCreatedBy", fields: [createdById], references: [id])
+  approvedBy        User?                @relation("IdentityApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  credentials       IdentityCredential[]
+  events            IdentityEvent[]
+
+  @@unique([organizationId, identifier])
+  @@index([organizationId, kind, status])
+  @@index([organizationId, type])
+  @@index([organizationId, linkedUserId])
+  @@index([organizationId, ownerUserId])
+  @@map("identities")
+}
+
+/// Scoped bearer credential for a non-human identity. Only a SHA-256 hash and a
+/// short display prefix are stored; the plaintext is returned once at issue
+/// time. Rotation issues a new row and revokes the old one, so credential
+/// history survives.
+model IdentityCredential {
+  id             String       @id @default(cuid())
+  organizationId String
+  identityId     String
+  name           String
+  keyHash        String       @unique
+  keyPrefix      String
+  scopes         String[]     @default([])
+  expiresAt      DateTime
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+  revokedReason  String?
+  createdById    String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  identity       Identity     @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  createdBy      User         @relation("IdentityCredentialCreatedBy", fields: [createdById], references: [id])
+
+  @@index([organizationId, identityId])
+  @@index([identityId, revokedAt])
+  @@index([organizationId, expiresAt])
+  @@map("identity_credentials")
+}
+
+/// Append-only object history for one identity. A database trigger rejects
+/// UPDATE and DELETE, matching the audit trail's integrity rule.
+model IdentityEvent {
+  id             String            @id @default(cuid())
+  organizationId String
+  identityId     String
+  type           IdentityEventType
+  actorId        String?
+  summary        String?
+  metadata       Json?
+  createdAt      DateTime          @default(now())
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  identity       Identity          @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  actor          User?             @relation("IdentityEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([identityId, createdAt])
+  @@map("identity_events")
+}
+
+/// One recertification campaign. Items snapshot the memberships that existed at
+/// creation, so a membership added mid-review is not silently approved by a
+/// campaign that never considered it.
+model AccessReview {
+  id             String             @id @default(cuid())
+  organizationId String
+  title          String
+  description    String?
+  status         AccessReviewStatus @default(ACTIVE)
+  dueAt          DateTime
+  createdById    String
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  completedAt    DateTime?
+  cancelledAt    DateTime?
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      User               @relation("AccessReviewCreatedBy", fields: [createdById], references: [id])
+  items          AccessReviewItem[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, dueAt])
+  @@map("access_reviews")
+}
+
+/// One membership under review, with a governance snapshot of the member. The
+/// decision is bound to an authenticated reviewer; `RETAIN` is an explicit
+/// affirmative record, not the absence of a revocation.
+model AccessReviewItem {
+  id             String               @id @default(cuid())
+  organizationId String
+  reviewId       String
+  membershipId   String
+  userId         String
+  userName       String
+  userEmail      String
+  roleAtReview   OrgRole
+  decision       AccessReviewDecision @default(PENDING)
+  decidedById    String?
+  decidedAt      DateTime?
+  note           String?
+  createdAt      DateTime             @default(now())
+  review         AccessReview         @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membership     Membership           @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  decidedBy      User?                @relation("AccessReviewDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@unique([reviewId, membershipId])
+  @@index([organizationId, reviewId, decision])
+  @@index([decidedById])
+  @@map("access_review_items")
 }
 
 // ---------------------------------------------------------------------------
@@ -881,4 +1194,116 @@ model SoftwareItem {
   @@index([organizationId, ecosystem, name])
   @@index([organizationId, assetId])
   @@map("software_items")
+}
+
+// ---------------------------------------------------------------------------
+// Indicators of compromise
+// ---------------------------------------------------------------------------
+
+/// One indicator of compromise, with the provenance needed to defend it in an
+/// investigation: where it came from, when it was first and last seen, and who
+/// recorded it. `value` is stored normalised (see domain/indicators.ts) so the
+/// same indicator imported twice from different feeds is one row, not two.
+model Indicator {
+  id             String              @id @default(cuid())
+  organizationId String
+  type           IndicatorType
+  /// Normalised form: lower-case domain/url/hash/email, canonical IP.
+  value          String
+  /// How the operator should read it, preserved from the source: the original
+  /// spelling of a URL or the case of a domain as published.
+  displayValue   String?
+  status         IndicatorStatus     @default(ACTIVE)
+  /// 0-100. Confidence is the provider's judgement, not ours.
+  confidence     Int                 @default(50)
+  sourceKind     IndicatorSourceKind @default(MANUAL)
+  /// Name of the feed, report or person that supplied the value.
+  sourceName     String
+  sourceUrl      String?
+  /// Identifier inside the source, e.g. a report or case number.
+  sourceRef      String?
+  firstSeenAt    DateTime
+  lastSeenAt     DateTime
+  expiresAt      DateTime?
+  note           String?
+  createdById    String
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      User                @relation("IndicatorCreatedBy", fields: [createdById], references: [id])
+  links          IndicatorLink[]
+
+  /// Also serves lookups by (organizationId, type, value); a separate index on
+  /// the same columns would be dead weight that every write has to maintain.
+  @@unique([organizationId, type, value])
+  @@index([organizationId, status, lastSeenAt])
+  @@map("indicators")
+}
+
+/// Link from an indicator to the record that cites or observed it. Exactly one
+/// of findingId and incidentId is set; the migration adds a CHECK constraint and
+/// two partial unique indexes, because a plain unique index treats NULLs as
+/// distinct and would allow the same pair twice.
+model IndicatorLink {
+  id             String            @id @default(cuid())
+  organizationId String
+  indicatorId    String
+  findingId      String?
+  incidentId     String?
+  relation       IndicatorRelation @default(REFERENCED)
+  note           String?
+  createdById    String
+  createdAt      DateTime          @default(now())
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  indicator      Indicator         @relation(fields: [indicatorId], references: [id], onDelete: Cascade)
+  finding        Finding?          @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  incident       Incident?         @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  createdBy      User              @relation("IndicatorLinkCreatedBy", fields: [createdById], references: [id])
+
+  @@index([organizationId, indicatorId])
+  @@index([findingId])
+  @@index([incidentId])
+  @@map("indicator_links")
+}
+
+// ---------------------------------------------------------------------------
+// Deployment-level state
+// ---------------------------------------------------------------------------
+
+/// Key/value state for the installation as a whole, never for one tenant. Used
+/// to record what this deployment has already applied — currently the
+/// fingerprint of the effective configuration — so a change is visible after
+/// the fact even though the process environment itself is not auditable.
+/// Values are always non-secret derived data (a keyed digest), never an
+/// environment value.
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Resource quotas
+// ---------------------------------------------------------------------------
+
+/// Per-organization override of the tier defaults in domain/quotas.ts. A NULL
+/// column means "use the tier default"; a non-null value replaces it. Storage
+/// is expressed in megabytes so the column stays a plain Int and cannot
+/// overflow a 32-bit integer in practice.
+model OrganizationQuota {
+  organizationId    String       @id
+  assets            Int?
+  findings          Int?
+  incidents         Int?
+  identities        Int?
+  agents            Int?
+  indicators        Int?
+  apiKeys           Int?
+  evidenceStorageMb Int?
+  updatedAt         DateTime     @updatedAt
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("organization_quotas")
 }

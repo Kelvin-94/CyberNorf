@@ -281,7 +281,7 @@ export async function sendTestNotification(
     select: { id: true },
   });
 
-  const result = await dispatchEventById(event.id);
+  const result = await dispatchEventForOrganization(ctx.organization.id, event.id);
 
   // A test that fails is as worth recording as one that succeeds: the operator
   // needs to know an alert path was exercised and what the endpoint answered.
@@ -438,9 +438,17 @@ async function deliverEvent(
   return { status: exhausted ? 'FAILED' : 'PENDING', error };
 }
 
-export async function dispatchEventById(eventId: string): Promise<DeliveryAttemptResult> {
-  const event = await prisma.notificationEvent.findUnique({
-    where: { id: eventId },
+export async function dispatchEventForOrganization(
+  organizationId: string,
+  eventId: string,
+): Promise<DeliveryAttemptResult> {
+  // Scoped by organization, not fetched by primary key alone. The event id comes
+  // from a caller that has already passed a tenant check, but an unscoped lookup
+  // would turn any future call site into a cross-tenant delivery: passing another
+  // tenant's event id would read their channel URL and send through it. The
+  // organizationId in the filter makes that impossible to write by accident.
+  const event = await prisma.notificationEvent.findFirst({
+    where: { id: eventId, organizationId },
     include: { channel: true },
   });
   if (!event) {

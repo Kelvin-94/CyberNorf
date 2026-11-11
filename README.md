@@ -1,26 +1,59 @@
 # CyberNorf
 
-**CyberNorf is a work-in-progress cybersecurity platform focused on defensive security, security operations, vulnerability management, and controlled security testing.**
+**One console for identity, device, network and evidence — a self-hosted, policy-driven security operations platform for teams that have to prove every decision.**
 
-> **Project status:** Early-stage, not production-ready. Phase 1 provides an authenticated, tenant-isolated SOC foundation (assets, findings, incidents, audit) with automated tests. Everything else in this README is a plan unless the [development status](#development-status) section says otherwise. Do not rely on it to protect production systems until the remaining phases are implemented and independently reviewed.
+CyberNorf answers the questions a defender actually asks, in one tenant-isolated workspace: what do we own, what is wrong with it, who and what can reach it, was that access legitimate, what did we do about it, and can we prove it afterwards. It is built for small security teams that need enterprise-grade accountability without an enterprise-grade integration project.
 
-## Vision
+> **Status:** Early-stage and not production-ready. The security-operations, endpoint-monitoring and identity-governance foundations are implemented and tested; Zero Trust policy enforcement, network access control, network detection and secure update distribution are specified and scheduled. [Implementation status](#implementation-status) is the authoritative list.
 
-Build a trustworthy workspace that helps individuals and security teams investigate alerts, organize evidence, prioritize vulnerabilities, document remediation, and conduct authorized assessments with clear scope and accountability.
+## The platform
 
-CyberNorf is intended to put **authorization, least privilege, privacy, and auditability** at the center of the product—not treat them as afterthoughts.
+The governing rule is that **nothing is trusted because it is inside the network.** Every access, deployment and enforcement decision is meant to be evaluated against an explicit policy, recorded as an attributable event, and verifiable afterwards. CyberNorf keeps observation, decision and outcome as separate records, so a detection, an inventory entry or a dashboard is never mistaken for proof.
 
-## Planned capabilities
+That rule organises the platform into three layers:
 
-The following is a proposed roadmap, not a claim that these features exist today. Asset inventory, finding lifecycle and remediation tracking, role-based access, and auditable actions exist in the Phase 1 foundation described under [development status](#development-status); everything else remains planned.
+- **Know** — who and what exists: human and non-human identities with owners and lifecycle, assets with criticality, devices with posture, network segments and the connections between them.
+- **Decide** — whether a specific request should be allowed: policy evaluation against identity, role, resource sensitivity, device trust, network location, time, risk and approval state, with every decision explained and recorded.
+- **Prove** — what happened: a hash-chained audit trail, evidence linked to controls, and outcomes the platform has verified rather than assumed.
 
-- **SOC workflows:** case management, alert triage, investigation timelines, and evidence-linked reports.
-- **Threat intelligence:** IOC organization, enrichment workflows, and links between observations and investigations.
-- **Vulnerability management:** asset inventory, finding prioritization, remediation tracking, and safe verification workflows.
-- **Security research workspace:** controlled static analysis and defensive investigation of suspicious files.
-- **Authorized assessment management:** engagement records, approved target scope, exclusions, time windows, and emergency contacts.
-- **Governance and audit:** role-based access, policy decisions, auditable actions, and evidence export.
-- **Reporting:** clear findings, severity rationale, limitations, and actionable remediation recommendations.
+```mermaid
+flowchart LR
+  I["Identity<br/>human and machine"] --> P{"Policy<br/>decision"}
+  D["Device<br/>trust and posture"] --> P
+  N["Network<br/>segment and location"] --> P
+  R["Resource<br/>sensitivity"] --> P
+  P -->|allow| A["Access"]
+  P -->|deny or step up| X["Block, quarantine<br/>or require approval"]
+  A --> E["Evidence<br/>audit and verification"]
+  X --> E
+```
+
+## Capabilities
+
+Each row describes what the capability is designed to do. The **Today** column states what exists in this repository; the roadmap is authoritative for everything else.
+
+| Capability                           | What it does                                                                                                                                                                                                                            | Today       |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| Tenant isolation and authorization   | Organizations with four roles, deny-by-default capabilities checked on the server for every route and page, TOTP for privileged mutations, optional OIDC sign-in, personal API keys for automation                                      | Implemented |
+| Asset and exposure inventory         | Registered, owned, classified assets with type, criticality and lifecycle, shared by findings, incidents and compliance evidence                                                                                                        | Implemented |
+| Vulnerability and finding management | Manual or JSON-imported findings with fingerprint deduplication, documented lifecycle, assignment, remediation notes, 0–100 risk score and severity-based SLA deadlines, with overdue and compliance reporting                          | Implemented |
+| Incident and investigation workflow  | Investigations with ownership, severity, notes, linked findings and a forward-only lifecycle with resolution timestamps                                                                                                                 | Implemented |
+| Compliance and control evidence      | Framework and control catalog, organization adoption, attestation, and evidence linked to real findings, incidents and assets                                                                                                           | Implemented |
+| Endpoint monitoring                  | Owner-approved host agents submitting scheduled runs with host facts, baseline checks and package inventory; health from heartbeats, optional signed runs, advisory matching and signed alert webhooks                                  | Implemented |
+| Identity lifecycle and inventory     | Human and non-human identities with canonical identifiers, criticality, accountable owner, approved scopes, credential expiry and rotation, approval status and revocation history                                                      | Implemented |
+| Machine credentials                  | One scoped, expiring, hash-stored bearer credential per non-human identity, revocable immediately and narrowed automatically when approval shrinks                                                                                      | Implemented |
+| Access reviews and recertification   | Campaigns that snapshot memberships, record an explicit retain or revoke decision per member, and apply revocations atomically with last-owner protection                                                                               | Implemented |
+| Tamper-evident audit                 | Per-organization hash chain written in the same transaction as the change, append-only by database trigger, verifiable through the UI and API, plus a separate append-only authentication activity table                                | Implemented |
+| Zero Trust policy decisions          | A central decision point evaluating each request against identity, role and attributes, resource sensitivity, device trust, network location, time, risk and approval state, returning a recorded, explained verdict                    | Planned     |
+| Device trust and posture             | Device registration, hardware-backed identity, posture collection and a trust state that policy and admission decisions can consume                                                                                                     | Planned     |
+| Network access control               | RADIUS and 802.1X with EAP-TLS, device discovery, posture-gated admission, and outcomes such as VLAN assignment, restricted access or quarantine, with defined behaviour when a connector is unreachable                                | Planned     |
+| Network visibility and detection     | Flow and telemetry ingestion from gateways and network devices, correlation into topology and segments, and detections that carry their supporting observations and telemetry freshness                                                 | Planned     |
+| Enforcement and response actions     | Approved, idempotent commands to gateways and integrations — session revocation, endpoint isolation, network quarantine, firewall blocking, certificate revocation — with acknowledgement and effect verification                       | Planned     |
+| Secure update and certificate trust  | Hardware-bound device identity, publisher signatures, digests and signed manifests, compatibility and anti-rollback enforcement, staged canaries, verified install results and rollback, with keys held outside ordinary infrastructure | Planned     |
+| Analytics and correlation            | Correlation across authentication, identity, device and network observations, configurable rules, anomaly scoring, prioritised investigations, and alerts that explain the observations behind them                                     | Partial     |
+| Dashboards and reporting             | Risk trends, SLA compliance, agent health, posture summaries and drill-down timelines for the implemented workflows; network and enforcement dashboards to follow                                                                       | Partial     |
+
+**What CyberNorf deliberately does not do.** It does not initiate scans or execute security tools — the agent reports and the platform records. It is not an EDR, SIEM, vulnerability scanner or packet-analysis platform, it never intercepts or decrypts user HTTPS traffic, it stores no uploaded files, and suspending an identity record does not end a console session because membership remains the access control. Identity, agent, advisory and asset records are workflows over data you supply, not discovery engines.
 
 ## Core design principles
 
@@ -32,34 +65,26 @@ The following is a proposed roadmap, not a claim that these features exist today
 6. **Accountability:** record security-relevant actions while protecting audit records from unauthorized alteration.
 7. **Honest status:** document what is implemented, tested, planned, and known to be incomplete.
 
-## Intended users
+## Intended users and deployment
 
 The initial focus is defensive security practitioners, SOC analysts, developers, and small security teams. More sensitive workflows should only be introduced after the authorization, isolation, logging, and incident-response controls are built and tested.
 
-## Proposed architecture
+CyberNorf is self-hosted. The production stack runs one console container against one PostgreSQL database behind a TLS proxy, with migrations applied from the same image. See [the production deployment guide](docs/DEPLOYMENT.md) and [the local development guide](docs/DEVELOPMENT.md).
 
-The implementation may evolve, but the target separation is:
+## Implementation status
 
-- **Web application:** user experience and workflow presentation.
-- **API/backend:** authentication, business logic, validation, and authorization enforcement.
-- **Policy layer:** role, capability, target scope, approval, and risk checks for sensitive actions.
-- **Worker execution layer:** isolated jobs with limited network access, runtime limits, and cancellation controls.
-- **Data layer:** tenant-aware persistence, secrets management, and controlled retention.
-- **Audit and monitoring:** security events, administrative actions, alerts, and reviewable evidence.
-
-Do not execute untrusted files or active security tests on the application host. Use isolated workers designed for the relevant threat model.
-
-## Development status
-
-**Phase 0 (product definition) and Phase 1 (secure SOC foundation) are implemented.** The application supports real multi-tenant workflows behind authenticated sessions, capability-based authorization, and a hash-chained audit trail. Phase 2 and later work described in the [roadmap](ROADMAP.md) is not implemented.
+**Phase 0 (product definition) and Phase 1 (secure SOC foundation) are implemented, and parts of Phases 2 and 3 ship** — endpoint monitoring and advisory matching, alert delivery, compliance evidence, dashboards, rate limits, health probes, retention and a restore drill. The application supports real multi-tenant workflows behind authenticated sessions, capability-based authorization, and a hash-chained audit trail. Phase 4 (controlled execution) and the remaining enterprise items in Phase 5 are not implemented; the [roadmap](ROADMAP.md) lists each gap per phase.
 
 ### What works today
 
 - **Accounts:** email and password registration and sign-in (12-character minimum passwords), optional OpenID Connect single sign-on, eight-hour sliding sessions, sign-out, and TOTP enrollment with ten backup codes at `/account/security`.
 - **Organizations:** create an organization, switch between organizations you belong to, and manage members and roles.
+- **Identity governance:** inventory human and non-human identities with type, criticality, owner, and lifecycle status; register service accounts, monitoring agents, API clients, servers, network devices, IoT devices, and containers that start pending owner approval; issue, rotate, and revoke one scoped, expiring bearer credential per machine; and run membership access reviews whose retain/revoke decisions are recorded per member and finalize atomically ([details](docs/IDENTITY_GOVERNANCE.md)).
 - **Assets:** register, edit, retire, and inspect organization-owned assets with type, identifier, criticality, and lifecycle status.
 - **Findings:** create findings manually or import them as JSON, deduplicate by fingerprint, move them through the documented lifecycle, assign them, and record remediation. Every finding is scored 0–100 from severity, CVSS, and asset criticality, gets a remediation deadline from its severity, and can be filtered to just the overdue work; the dashboard reports SLA compliance and mean time to resolve ([details](docs/FINDINGS.md)).
 - **Incidents:** create investigations, record notes, link findings, and move them through a forward-only lifecycle.
+- **Endpoint monitoring:** enroll a host agent with a one-time token, approve it as an owner, and receive scheduled runs with host facts, baseline security checks and installed packages; optionally require signed runs, match packages against an imported advisory feed, and deliver alerts to webhook destinations with sealed signing secrets.
+- **Compliance:** adopt a framework from the control catalog, attest controls, and attach evidence that links back to findings, incidents and assets.
 - **Audit:** every security-relevant action is written to a per-organization hash chain that the UI and API can verify. Authentication activity — sign-in success and failure, second-factor verification, session ending, and two-factor disablement — is recorded in a separate append-only table, because a sign-in happens before any organization is known, and is shown to the account it belongs to on `/account/security`.
 
 ### Security properties currently enforced
@@ -69,6 +94,24 @@ Do not execute untrusted files or active security tests on the application host.
 - TOTP second factor required for `OWNER` and `ADMIN` accounts before they can modify tenant data.
 - Same-origin check for state changes, per-IP and per-user rate limits shared through PostgreSQL, bounded JSON bodies, and uniform error responses without stack traces.
 - `UPDATE` and `DELETE` on audit rows rejected by a database trigger, with per-organization advisory locking so concurrent writers cannot fork the hash chain. Authentication activity rows are append-only by their own trigger, and never store the address a failed sign-in typed.
+- Machine credentials are stored only as SHA-256 digests, expire within a bounded TTL, carry one scope (`identity.self.read`), are limited to one active credential per identity, and are re-checked for revocation, scope, expiry, and identity status on every call. The plaintext token is shown once at issue time and never written to the database or audit trail.
+
+### Known limitations
+
+- No password reset, email verification, or invitation email. An owner or administrator must add an already-registered account by email.
+- SSO is a single OpenID Connect provider enabled through `OIDC_*` variables: no SAML, no SCIM, and no automatic de-provisioning when someone leaves the identity provider.
+- No file uploads or evidence attachments.
+- Identity governance has no SCIM, OIDC, or CSV import, so inventory must be entered manually and can drift from the directory. Suspending a human identity does not end an existing console session (that requires revoking the membership). Access reviews cover memberships only, are never scheduled automatically, cannot be reopened, and do not revoke machine credentials. Machine tokens are bearer secrets with no mTLS, workload attestation, IP allowlist, or per-request nonce.
+- No background worker is bundled: a cron job or systemd timer calls the alert sweep, and the retention and export scripts are run by an operator.
+- Nothing pages a human. `/api/ready` fails when the database is unreachable or its schema is behind the image, but alert routing is an operator responsibility, and recovery depends on running `npm run db:restore-drill` on a schedule and keeping the report.
+- Application logs are JSON lines on stdout with no shipping, rotation, metrics, or tracing built in. There is no collector, dashboard, or log-based alerting; the host's log driver must bound disk use ([details](docs/LOGGING.md)).
+- Secrets come from environment variables: there is no secrets-manager integration, no automated rotation, and no rotation drill has been executed against a real deployment. Startup validates every variable and the rotation runbook is documented ([details](docs/SECRETS.md)).
+- The audit chain is hash-linked but not signed, and depends on restricting direct database access.
+- Rate-limit counters are only removed when `data:retention` runs with `--prune-rate-limits`.
+- Retention never removes findings, incidents, assets, compliance evidence, or audit rows; a person closes those records.
+- The production stack targets one host: one console container against one PostgreSQL database, with no horizontal scaling or high availability.
+
+Before any public or production release, still required: a restore drill run on a schedule with its reports retained, a rehearsed `BETTER_AUTH_SECRET` rotation, alert routing to a human, a dependency-response process, and an independent security review of the API and tenant isolation. Backup tooling, retention workflows and deployment documentation exist, and a drill has been executed locally; operating them on a schedule is the operator's job.
 
 ### Checks
 
@@ -77,22 +120,15 @@ npm test        # unit + database-backed integration tests (needs the test datab
 npm run lint
 npm run typecheck
 npm run build
+
+# Validates every environment variable; exits non-zero on a config the app would refuse.
+npm run config:check -- --env-file .env.production
+
+# Proves a dump restores and the restored copy still enforces its guarantees.
+npm run db:restore-drill -- --docker-exec <database-container> --report drill.json
 ```
 
-See [the local development guide](docs/DEVELOPMENT.md) for setup, test-database creation, and the demo walkthrough, [the production deployment guide](docs/DEPLOYMENT.md) for the TLS proxy and compose stack, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the implemented design.
-
-### Known limitations
-
-- No password reset, email verification, or invitation email. An owner or administrator must add an already-registered account by email.
-- SSO is a single OpenID Connect provider enabled through `OIDC_*` variables: no SAML, no SCIM, and no automatic de-provisioning when someone leaves the identity provider.
-- No file uploads or evidence attachments.
-- No background worker is bundled: a cron job or systemd timer calls the alert sweep, and the retention and export scripts are run by an operator.
-- The audit chain is hash-linked but not signed, and depends on restricting direct database access.
-- Rate-limit counters are only removed when `data:retention` runs with `--prune-rate-limits`.
-- Retention never removes findings, incidents, assets, compliance evidence, or audit rows; a person closes those records.
-- The production stack targets one host: one console container against one PostgreSQL database, with no horizontal scaling or high availability.
-
-Before any public or production release, still required: backup and restoration drills, monitoring and alerting, retention and deletion workflows, deployment and rollback documentation, and an independent security review.
+See [the local development guide](docs/DEVELOPMENT.md) for setup, test-database creation, and the demo walkthrough, [the production deployment guide](docs/DEPLOYMENT.md) for the TLS proxy and compose stack, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the implemented design, [docs/LOGGING.md](docs/LOGGING.md) for the structured log format and its redaction guarantees, [docs/SECRETS.md](docs/SECRETS.md) for the secret inventory, startup validation and rotation procedures, and [docs/IDENTITY_GOVERNANCE.md](docs/IDENTITY_GOVERNANCE.md) for the identity-governance module and its threat model.
 
 ## Security reporting
 

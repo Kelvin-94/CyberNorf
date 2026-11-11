@@ -4,6 +4,7 @@ import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
 import type { TenantContext } from '@/server/authz/context';
 import { canTransitionIncident } from '@/server/domain/transitions';
 import { conflict, notFound } from '@/server/errors';
+import { assertQuotaAvailable } from './quotas';
 import { assertActiveMember, paginationMeta } from './shared';
 
 export interface IncidentListQuery {
@@ -136,6 +137,12 @@ export async function createIncident(
   await assertActiveMember(ctx.organization.id, assignedToId);
 
   return prisma.$transaction(async (tx) => {
+    await assertQuotaAvailable(tx, {
+      organizationId: ctx.organization.id,
+      tier: ctx.organization.tier,
+      resource: 'incidents',
+    });
+
     const incident = await tx.incident.create({
       data: {
         organizationId: ctx.organization.id,

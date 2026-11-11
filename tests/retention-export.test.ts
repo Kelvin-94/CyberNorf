@@ -369,3 +369,182 @@ test('the export carries business records and no credentials', async () => {
     'the chain leaves the platform with its hashes',
   );
 });
+
+test('the export carries indicators, identities, reviews and quota overrides', async () => {
+  const seeded = await seedTenant();
+  const other = await createTenant({ role: 'OWNER', twoFactorEnabled: true });
+  const organizationId = seeded.tenant.organization.id;
+
+  const finding = await prisma.finding.create({
+    data: {
+      organizationId,
+      title: 'Beaconing to a known command-and-control domain',
+      severity: 'HIGH',
+      source: 'AGENT',
+      fingerprint: `export-ioc-${organizationId}`,
+      createdById: seeded.tenant.user.id,
+    },
+    select: { id: true },
+  });
+
+  const indicator = await prisma.indicator.create({
+    data: {
+      organizationId,
+      type: 'DOMAIN',
+      value: 'malware.example',
+      displayValue: 'Malware.Example',
+      confidence: 80,
+      sourceKind: 'MANUAL',
+      sourceName: 'Incident 42 notes',
+      firstSeenAt: OLD,
+      lastSeenAt: RECENT,
+      createdById: seeded.tenant.user.id,
+    },
+    select: { id: true },
+  });
+
+  const link = await prisma.indicatorLink.create({
+    data: {
+      organizationId,
+      indicatorId: indicator.id,
+      findingId: finding.id,
+      relation: 'REFERENCED',
+      note: 'Seen in the same proxy session',
+      createdById: seeded.tenant.user.id,
+    },
+    select: { id: true },
+  });
+
+  const foreignIndicator = await prisma.indicator.create({
+    data: {
+      organizationId: other.organization.id,
+      type: 'DOMAIN',
+      value: 'other-tenant.example',
+      sourceKind: 'MANUAL',
+      sourceName: 'Other tenant feed',
+      firstSeenAt: RECENT,
+      lastSeenAt: RECENT,
+      createdById: other.user.id,
+    },
+    select: { id: true },
+  });
+
+  const identity = await prisma.identity.create({
+    data: {
+      organizationId,
+      kind: 'MACHINE',
+      type: 'SERVICE_ACCOUNT',
+      displayName: 'Backup runner',
+      identifier: 'svc-backup@cybernorf.test',
+      criticality: 'HIGH',
+      approvedScopes: ['assets.read'],
+      createdById: seeded.tenant.user.id,
+    },
+    select: { id: true },
+  });
+
+  const credentialHash = randomBytes(32).toString('hex');
+  const credential = await prisma.identityCredential.create({
+    data: {
+      organizationId,
+      identityId: identity.id,
+      name: 'ci token',
+      keyHash: credentialHash,
+      keyPrefix: 'cnid_export_test',
+      scopes: ['assets.read'],
+      expiresAt: new Date(NOW.getTime() + 30 * 24 * 60 * 60 * 1000),
+      createdById: seeded.tenant.user.id,
+    },
+    select: { id: true },
+  });
+
+  const review = await prisma.accessReview.create({
+    data: {
+      organizationId,
+      title: 'Quarterly access review',
+      // A database check requires the due date to follow creation.
+      dueAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      createdById: seeded.tenant.user.id,
+      items: {
+        create: {
+          organizationId,
+          membershipId: seeded.tenant.membership.id,
+          userId: seeded.tenant.user.id,
+          userName: seeded.tenant.user.name,
+          userEmail: seeded.tenant.user.email,
+          roleAtReview: 'OWNER',
+        },
+      },
+    },
+    select: { id: true, items: { select: { id: true } } },
+  });
+
+  await prisma.organizationQuota.create({
+    data: { organizationId, assets: 12, indicators: 5_000 },
+  });
+
+  const payload = await exportOrganization(organizationId);
+
+  assert.equal(payload.meta.version, 2, 'the export format version follows the added sections');
+  assert.deepEqual(
+    {
+      identities: payload.meta.counts.identities,
+      identityCredentials: payload.meta.counts.identityCredentials,
+      accessReviews: payload.meta.counts.accessReviews,
+      indicators: payload.meta.counts.indicators,
+      indicatorLinks: payload.meta.counts.indicatorLinks,
+    },
+    { identities: 1, identityCredentials: 1, accessReviews: 1, indicators: 1, indicatorLinks: 1 },
+  );
+
+  assert.deepEqual(
+    payload.indicators.map((row) => (row as { id: string }).id),
+    [indicator.id],
+  );
+  assert.deepEqual(
+    payload.indicatorLinks.map((row) => (row as { id: string }).id),
+    [link.id],
+  );
+  assert.deepEqual(
+    payload.identities.map((row) => (row as { id: string }).id),
+    [identity.id],
+  );
+  assert.deepEqual(
+    payload.identityCredentials.map((row) => (row as { id: string }).id),
+    [credential.id],
+  );
+
+  const exportedReview = payload.accessReviews[0] as {
+    id: string;
+    items: Array<{ id: string; userEmail: string }>;
+  };
+  assert.equal(exportedReview.id, review.id);
+  assert.deepEqual(
+    exportedReview.items.map((item) => item.id),
+    review.items.map((item) => item.id),
+    'review decisions leave with the review they belong to',
+  );
+
+  const quotaFields = { ...(payload.quotas as Record<string, unknown>) };
+  delete quotaFields.updatedAt;
+  assert.deepEqual(quotaFields, {
+    organizationId,
+    assets: 12,
+    findings: null,
+    incidents: null,
+    identities: null,
+    agents: null,
+    indicators: 5_000,
+    apiKeys: null,
+    evidenceStorageMb: null,
+  });
+
+  const serialized = JSON.stringify(payload);
+  assert.ok(
+    !serialized.includes(foreignIndicator.id) && !serialized.includes('other-tenant.example'),
+    'another tenant indicator must not leak into the export',
+  );
+  for (const forbidden of ['keyHash', 'keyPrefix', credentialHash]) {
+    assert.ok(!serialized.includes(forbidden), `the export must not contain ${forbidden}`);
+  }
+});

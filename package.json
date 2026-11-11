@@ -12,8 +12,8 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint .",
-    "format": "prisma format && prettier --write 'src/**/*.{ts,tsx,css}' 'scripts/**/*.{ts,mjs}' '*.json' '*.ts' '*.mjs' 'compose.yaml' 'compose.prod.yaml' '.github/**/*.yml' 'docs/DEVELOPMENT.md' 'docs/DEPLOYMENT.md' 'docs/decisions/*.md'",
-    "format:check": "prisma format --check && prettier --check 'src/**/*.{ts,tsx,css}' 'scripts/**/*.{ts,mjs}' '*.json' '*.ts' '*.mjs' 'compose.yaml' 'compose.prod.yaml' '.github/**/*.yml' 'docs/DEVELOPMENT.md' 'docs/DEPLOYMENT.md' 'docs/decisions/*.md'",
+    "format": "prisma format && prettier --write 'src/**/*.{ts,tsx,css}' 'scripts/**/*.{ts,mjs}' '*.json' '*.ts' '*.mjs' 'compose.yaml' 'compose.prod.yaml' '.github/**/*.yml' 'docs/DEVELOPMENT.md' 'docs/DEPLOYMENT.md' 'docs/SECRETS.md' 'docs/decisions/*.md'",
+    "format:check": "prisma format --check && prettier --check 'src/**/*.{ts,tsx,css}' 'scripts/**/*.{ts,mjs}' '*.json' '*.ts' '*.mjs' 'compose.yaml' 'compose.prod.yaml' '.github/**/*.yml' 'docs/DEVELOPMENT.md' 'docs/DEPLOYMENT.md' 'docs/SECRETS.md' 'docs/decisions/*.md'",
     "typecheck": "prisma generate && next typegen && tsc --noEmit",
     "test": "tsx --env-file-if-exists=.env.test --test --test-concurrency=1 \"src/**/*.test.ts\" \"tests/**/*.test.ts\"",
     "test:unit": "tsx --env-file-if-exists=.env.test --test --test-concurrency=1 \"src/**/*.test.ts\"",
@@ -24,8 +24,13 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:migrate:status": "prisma migrate status",
     "audit:runtime": "node scripts/audit-runtime.mjs",
+    "config:check": "tsx scripts/config-check.ts",
+    "quota": "tsx --env-file-if-exists=.env scripts/quota.ts",
+    "evidence:verify": "tsx --env-file-if-exists=.env scripts/evidence-integrity.ts",
+    "secrets:rotate": "tsx scripts/secrets-rotate.ts",
     "data:export": "tsx --env-file-if-exists=.env scripts/data/export.ts",
-    "data:retention": "tsx --env-file-if-exists=.env scripts/data/retention.ts"
+    "data:retention": "tsx --env-file-if-exists=.env scripts/data/retention.ts",
+    "db:restore-drill": "tsx --env-file-if-exists=.env scripts/data/restore-drill.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",

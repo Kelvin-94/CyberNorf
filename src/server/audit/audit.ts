@@ -47,6 +47,29 @@ export const AuditActions = {
   ADVISORY_DELETED: 'advisory.deleted',
   API_KEY_CREATED: 'api_key.created',
   API_KEY_REVOKED: 'api_key.revoked',
+  IDENTITY_CREATED: 'identity.created',
+  IDENTITY_UPDATED: 'identity.updated',
+  IDENTITY_APPROVED: 'identity.approved',
+  IDENTITY_SUSPENDED: 'identity.suspended',
+  IDENTITY_REACTIVATED: 'identity.reactivated',
+  IDENTITY_DEPROVISIONED: 'identity.deprovisioned',
+  IDENTITY_CREDENTIAL_ISSUED: 'identity.credential_issued',
+  IDENTITY_CREDENTIAL_ROTATED: 'identity.credential_rotated',
+  IDENTITY_CREDENTIAL_REVOKED: 'identity.credential_revoked',
+  ACCESS_REVIEW_CREATED: 'access_review.created',
+  ACCESS_REVIEW_DECISION_RECORDED: 'access_review.decision_recorded',
+  ACCESS_REVIEW_COMPLETED: 'access_review.completed',
+  ACCESS_REVIEW_CANCELLED: 'access_review.cancelled',
+  INDICATOR_CREATED: 'indicator.created',
+  INDICATOR_IMPORTED: 'indicator.imported',
+  INDICATOR_UPDATED: 'indicator.updated',
+  INDICATOR_DELETED: 'indicator.deleted',
+  INDICATOR_LINKED: 'indicator.linked',
+  INDICATOR_UNLINKED: 'indicator.unlinked',
+  EVIDENCE_FILE_UPLOADED: 'compliance.evidence_file_uploaded',
+  EVIDENCE_FILE_INTEGRITY_CHECKED: 'compliance.evidence_integrity_checked',
+  EXPORT_DOWNLOADED: 'export.downloaded',
+  QUOTA_OVERRIDE_CHANGED: 'quota.override_changed',
   ACCESS_DENIED: 'access.denied',
 } as const;
 
@@ -180,8 +203,11 @@ export async function recordAuditEvent(input: AuditEventInput): Promise<void> {
  * by a database trigger, so a mismatch indicates out-of-band modification,
  * corrupted storage, or a defect in the append path.
  */
-export async function verifyAuditChain(organizationId: string): Promise<AuditChainVerification> {
-  const events = await prisma.auditEvent.findMany({
+export async function verifyAuditChain(
+  organizationId: string,
+  client: AuditTx = prisma,
+): Promise<AuditChainVerification> {
+  const events = await client.auditEvent.findMany({
     where: { organizationId },
     orderBy: { sequence: 'asc' },
     select: {

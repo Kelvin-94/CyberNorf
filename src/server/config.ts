@@ -81,18 +81,16 @@ function requestsTls(databaseUrl: string): boolean {
 }
 
 /**
- * Refuses to boot a production build that would move sessions, credentials or
- * audit data over a cleartext link. Development is exempt so local work over
- * http/loopback keeps working; there the process only talks to itself.
+ * The origin leg of the transport policy. Exported on its own so callers that
+ * validate several variables can report each failure separately instead of
+ * stopping at the first one.
  */
-export function assertSecureTransport({
+export function assertSecureOrigin({
   production = isProduction(),
   origin = process.env.BETTER_AUTH_URL,
-  databaseUrl = process.env.DATABASE_URL,
 }: {
   production?: boolean;
   origin?: string | undefined;
-  databaseUrl?: string | undefined;
 } = {}): void {
   if (!production) {
     return;
@@ -110,10 +108,46 @@ export function assertSecureTransport({
       'BETTER_AUTH_URL must be an https:// origin in production: session cookies are marked Secure and the app will not work over plain http.',
     );
   }
+}
 
-  if (databaseUrl && !isLocalDatabase(databaseUrl) && !requestsTls(databaseUrl)) {
+/**
+ * The database leg of the transport policy: a remote database must request
+ * TLS. A loopback or unix-socket database never leaves the host.
+ */
+export function assertSecureDatabase({
+  production = isProduction(),
+  databaseUrl = process.env.DATABASE_URL,
+}: {
+  production?: boolean;
+  databaseUrl?: string | undefined;
+} = {}): void {
+  if (!production || !databaseUrl) {
+    return;
+  }
+
+  if (!isLocalDatabase(databaseUrl) && !requestsTls(databaseUrl)) {
     throw new Error(
       'DATABASE_URL must request TLS for a remote database in production: add sslmode=require (or sslmode=verify-full with a CA).',
     );
   }
+}
+
+/**
+ * Refuses to boot a production build that would move sessions, credentials or
+ * audit data over a cleartext link. Development is exempt so local work over
+ * http/loopback keeps working; there the process only talks to itself.
+ *
+ * Kept as the single entry point for callers that only need the verdict.
+ */
+export function assertSecureTransport({
+  production = isProduction(),
+  origin = process.env.BETTER_AUTH_URL,
+  databaseUrl = process.env.DATABASE_URL,
+}: {
+  production?: boolean;
+  origin?: string | undefined;
+  databaseUrl?: string | undefined;
+} = {}): void {
+  assertSecureOrigin({ production, origin });
+  assertSecureDatabase({ production, databaseUrl });
 }

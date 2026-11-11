@@ -38,6 +38,7 @@ Compose publishes PostgreSQL on `POSTGRES_HOST_PORT` (default `5432`). If that p
 | `BETTER_AUTH_URL`               | yes                     | Public origin. Used for cookies, trusted origins, and the same-origin check.                      |
 | `POSTGRES_HOST_PORT`            | Compose only            | Host port mapped to the PostgreSQL container.                                                     |
 | `CRON_SECRET`                   | for alert sweep         | Bearer token the scheduler presents to `/api/cron/notifications`; 24+ chars.                      |
+| `LOG_LEVEL`                     | no                      | Minimum level written to stdout: `debug`, `info`, `warn` or `error`; defaults to `info`.          |
 | `NOTIFY_ALLOW_PRIVATE_WEBHOOKS` | no                      | `true` allows alert destinations on loopback/private addresses (internal collector only).         |
 | `AGENT_REQUIRE_SIGNED_RUNS`     | no                      | `true` refuses unsigned agent submissions; set it once every host runs a signing monitor.         |
 | `OIDC_ISSUER`                   | with SSO                | Identity provider issuer URL; discovery is read from `<issuer>/.well-known/openid-configuration`. |
@@ -454,7 +455,7 @@ npm run audit:runtime
 npm run build
 ```
 
-The GitHub Actions workflow provisions PostgreSQL, applies migrations to both the primary and test databases, runs these checks, starts a production build to run the runtime audit, audits npm dependencies at `high`, and scans repository history for secrets.
+The GitHub Actions workflow provisions PostgreSQL, applies migrations to both the primary and test databases, runs these checks, starts a production build to run the runtime audit, audits npm dependencies at `low`, and scans repository history (and the working tree) for secrets with gitleaks.
 
 ## Start the application
 
@@ -470,7 +471,7 @@ Open [http://localhost:3000](http://localhost:3000), then:
 4. In the organization, register an asset, create a finding, move it through `OPEN → TRIAGED → IN_PROGRESS → RESOLVED`, then open `/app/<org>/audit` and verify the chain.
 5. Add a second account as `VIEWER` from `members` to confirm that read-only access still sees the audit trail but cannot change records.
 
-Liveness and readiness endpoints: `/api/health` returns `{"status":"ok"}` while the process serves requests; `/api/ready` also checks the database connection.
+Liveness and readiness endpoints: `/api/health` returns `{"status":"ok"}` while the process serves requests; `/api/ready` also checks the database connection and compares the applied migrations with the ones in `prisma/migrations`, answering `503` with `checks.migrations: "pending"` when the database is behind the code. `npm run db:restore-drill` exercises a dump-and-restore of the database you point it at; see [DEPLOYMENT.md](DEPLOYMENT.md#operating-it).
 
 For a production build and local production server:
 
