@@ -1,4 +1,10 @@
-import { Prisma, type Agent, type AgentSource, type AgentStatus } from '@/generated/prisma/client';
+import {
+  Prisma,
+  type Agent,
+  type AgentSource,
+  type AgentStatus,
+  type AssetCriticality,
+} from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
 import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
 import type { TenantContext } from '@/server/authz/context';
@@ -16,7 +22,7 @@ import {
 import { deriveAgentHealth, type AgentHealth } from '@/server/domain/notifications';
 import { badRequest, conflict, forbidden, notFound, unauthenticated } from '@/server/errors';
 import { attachMappedEvidence, loadMappedControls } from '@/server/services/check-maps';
-import { agentFingerprint, isUniqueConstraintError } from '@/server/services/shared';
+import { agentFingerprint, isUniqueConstraintError, riskFields } from '@/server/services/shared';
 import { syncInventoryAndMatch } from '@/server/services/software';
 import type {
   AgentHeartbeatInput,
@@ -839,7 +845,7 @@ export async function recordAgentRun(
       const fingerprint = agentFingerprint(principal.organizationId, check.id, checkTarget);
       const existing = await tx.finding.findFirst({
         where: { organizationId: principal.organizationId, fingerprint },
-        select: { id: true, status: true },
+        select: { id: true, status: true, severity: true, firstSeenAt: true },
       });
 
       if (!existing) {
@@ -859,6 +865,9 @@ export async function recordAgentRun(
             createdById: principal.createdById,
             firstSeenAt: now,
             lastSeenAt: now,
+            // Check findings are host-level and carry no asset relation, so the
+            // score uses severity alone until an analyst links them to an asset.
+            ...riskFields({ severity: check.severity, firstSeenAt: now }),
           },
           select: { id: true, title: true },
         });
@@ -911,6 +920,9 @@ export async function recordAgentRun(
           lastSeenAt: now,
           severity: check.severity,
           agent: { connect: { id: principal.id } },
+          // A monitor can raise or lower the severity it reports; the score and
+          // deadline follow it, still anchored to the first observation.
+          ...riskFields({ severity: check.severity, firstSeenAt: existing.firstSeenAt }),
         };
         if (check.detail) {
           refresh.description = check.detail;
@@ -977,11 +989,34 @@ export async function recordAgentRun(
         });
       }
 
+      // Advisory findings are attached to a discovered asset, whose criticality
+      // changes the score. One lookup for the whole run keeps this linear.
+      const advisoryAssetIds = [
+        ...new Set(inventory.matches.flatMap((match) => match.assetId ?? [])),
+      ];
+      const advisoryCriticality = new Map<string, AssetCriticality>(
+        advisoryAssetIds.length === 0
+          ? []
+          : (
+              await tx.asset.findMany({
+                where: { organizationId: principal.organizationId, id: { in: advisoryAssetIds } },
+                select: { id: true, criticality: true },
+              })
+            ).map((row) => [row.id, row.criticality]),
+      );
+
       for (const draft of inventory.matches) {
         advisoryMatches += 1;
         const existingAdvisory = await tx.finding.findFirst({
           where: { organizationId: principal.organizationId, fingerprint: draft.fingerprint },
-          select: { id: true, status: true },
+          select: {
+            id: true,
+            status: true,
+            severity: true,
+            cvssScore: true,
+            assetId: true,
+            firstSeenAt: true,
+          },
         });
         const description = `${draft.summary} ${draft.packageName} ${draft.installedVersion} installed on ${draft.target} falls inside the affected range ${draft.affectedRange}.`;
         const remediation = draft.fixedVersion
@@ -1009,6 +1044,14 @@ export async function recordAgentRun(
               createdById: principal.createdById,
               firstSeenAt: now,
               lastSeenAt: now,
+              ...riskFields({
+                severity: draft.severity,
+                cvssScore: draft.cvssScore,
+                assetCriticality: draft.assetId
+                  ? (advisoryCriticality.get(draft.assetId) ?? null)
+                  : null,
+                firstSeenAt: now,
+              }),
             },
             select: { id: true, title: true },
           });
@@ -1044,6 +1087,7 @@ export async function recordAgentRun(
         }
 
         if (OPEN_FINDING_STATUSES.has(existingAdvisory.status)) {
+          const linkedAssetId = draft.assetId ?? existingAdvisory.assetId;
           await tx.finding.update({
             where: { id: existingAdvisory.id },
             data: {
@@ -1054,6 +1098,14 @@ export async function recordAgentRun(
               cvssScore: draft.cvssScore,
               ...(draft.assetId ? { asset: { connect: { id: draft.assetId } } } : {}),
               agent: { connect: { id: principal.id } },
+              ...riskFields({
+                severity: draft.severity,
+                cvssScore: draft.cvssScore,
+                assetCriticality: linkedAssetId
+                  ? (advisoryCriticality.get(linkedAssetId) ?? null)
+                  : null,
+                firstSeenAt: existingAdvisory.firstSeenAt,
+              }),
             },
           });
           findingsRefreshed += 1;

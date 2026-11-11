@@ -1,6 +1,29 @@
 import { createHash } from 'node:crypto';
+import type { AssetCriticality, FindingSeverity } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
+import { computeRiskScore, remediationDueAt } from '@/server/domain/risk';
 import { badRequest, notFound } from '@/server/errors';
+
+/**
+ * The two derived columns every finding write path must keep consistent.
+ * Callers already know (or have just loaded) the asset criticality, so this
+ * stays pure and usable inside a transaction.
+ */
+export function riskFields(input: {
+  severity: FindingSeverity;
+  cvssScore?: number | null;
+  assetCriticality?: AssetCriticality | null;
+  firstSeenAt: Date;
+}): { riskScore: number; dueAt: Date } {
+  return {
+    riskScore: computeRiskScore({
+      severity: input.severity,
+      cvssScore: input.cvssScore ?? null,
+      assetCriticality: input.assetCriticality ?? null,
+    }),
+    dueAt: remediationDueAt({ severity: input.severity, firstSeenAt: input.firstSeenAt }),
+  };
+}
 
 export function isUniqueConstraintError(error: unknown): boolean {
   return (

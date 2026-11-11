@@ -15,6 +15,7 @@ export const GET = withTenantApi('finding.read', {}, async ({ request, meta, ctx
     ...(query.assetId ? { assetId: query.assetId } : {}),
     ...(query.incidentId ? { incidentId: query.incidentId } : {}),
     ...(query.assignedToId ? { assignedToId: query.assignedToId } : {}),
+    overdue: query.overdue ?? false,
     page: query.page,
     pageSize: query.pageSize,
     sort: query.sort,

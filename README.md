@@ -58,7 +58,7 @@ Do not execute untrusted files or active security tests on the application host.
 - **Accounts:** email and password registration and sign-in (12-character minimum passwords), optional OpenID Connect single sign-on, eight-hour sliding sessions, sign-out, and TOTP enrollment with ten backup codes at `/account/security`.
 - **Organizations:** create an organization, switch between organizations you belong to, and manage members and roles.
 - **Assets:** register, edit, retire, and inspect organization-owned assets with type, identifier, criticality, and lifecycle status.
-- **Findings:** create findings manually or import them as JSON, deduplicate by fingerprint, move them through the documented lifecycle, assign them, and record remediation.
+- **Findings:** create findings manually or import them as JSON, deduplicate by fingerprint, move them through the documented lifecycle, assign them, and record remediation. Every finding is scored 0–100 from severity, CVSS, and asset criticality, gets a remediation deadline from its severity, and can be filtered to just the overdue work; the dashboard reports SLA compliance and mean time to resolve ([details](docs/FINDINGS.md)).
 - **Incidents:** create investigations, record notes, link findings, and move them through a forward-only lifecycle.
 - **Audit:** every security-relevant action is written to a per-organization hash chain that the UI and API can verify.
 
