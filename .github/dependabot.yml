@@ -4,6 +4,23 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Adopt a version only after it has been public for a while: a hijacked
+    # maintainer account or a broken release is normally noticed and yanked
+    # within days, and this repo validates every bump in CI before merging.
+    # Security updates ignore cooldown, so a CVE fix still arrives immediately.
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+    # One PR for the lint/test toolchain instead of one per package; a broken
+    # combined tree is still caught by the required checks before merge.
+    groups:
+      development-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
     ignore:
       # typescript-eslint 8.x peers on typescript ^5, so the updater cannot
       # resolve a TypeScript 7 tree and fails the whole job. Revisit when
@@ -21,3 +38,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Actions are pinned by commit SHA, so a compromised tag or a force-push
+    # release cannot reach the workflow between updates. Give a bad release the
+    # same settling window before the pin is moved.
+    cooldown:
+      default-days: 7
