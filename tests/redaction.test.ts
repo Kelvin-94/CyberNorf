@@ -124,6 +124,31 @@ test('bounds depth and entry count so a hostile payload cannot stall logging', (
   assert.ok(Object.keys(bounded).length <= 100);
 });
 
+test('drops values JSON cannot represent instead of failing the audit write', () => {
+  // A class instance with an enumerable `constructor` (Prisma's Decimal is one)
+  // used to smuggle a function into audit metadata, which Prisma then refused
+  // to serialise. The redactor must guarantee a JSON-safe result.
+  class Money {
+    constructor(public amount: number) {}
+  }
+
+  const redacted = redactValue({
+    cvssScore: 7.5,
+    nested: { fn: () => 'nope', symbol: Symbol('nope'), keep: 'value' },
+    list: [() => 'nope', 'kept'],
+    instance: new Money(3),
+  }) as Record<string, unknown>;
+
+  const nested = redacted.nested as Record<string, unknown>;
+  assert.equal('fn' in nested, false);
+  assert.equal('symbol' in nested, false);
+  assert.equal(nested.keep, 'value');
+  assert.deepEqual(redacted.list, ['kept']);
+  assert.equal(redacted.cvssScore, 7.5);
+  // The whole value survives a JSON round trip unchanged.
+  assert.deepEqual(JSON.parse(JSON.stringify(redacted)), redacted);
+});
+
 test('serialises errors without leaking credentials', () => {
   const credential = fixture('sk_', 'live_', 'abcdef1234567890');
   const error = new Error(`upstream rejected Authorization: Bearer ${credential}`);

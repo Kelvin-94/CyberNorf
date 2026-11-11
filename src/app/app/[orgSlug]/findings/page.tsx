@@ -4,8 +4,10 @@ import { notFound } from 'next/navigation';
 import { ActionForm } from '@/components/action-form';
 import { ImportFindingsForm } from '@/components/findings/import-findings-form';
 import { can } from '@/server/authz/roles';
+import { remediationState } from '@/server/domain/risk';
 import { listFindingFormOptions, listFindings } from '@/server/services/findings';
 import { loadTenantContext } from '@/server/ui/session';
+import type { FindingStatus } from '@/generated/prisma/client';
 import { enumSearchParam, searchParam } from '@/server/validation/common';
 import {
   findingQuerySchema,
@@ -15,6 +17,26 @@ import {
 
 export const metadata: Metadata = { title: 'Findings · CyberNorf' };
 export const dynamic = 'force-dynamic';
+
+/**
+ * Renders the remediation deadline with its state. The date is always shown so
+ * an analyst who has no badge still sees when the clock runs out.
+ */
+function DueBadge({ dueAt, status }: { dueAt: Date | null; status: FindingStatus }) {
+  const state = remediationState({ dueAt, status });
+  if (!dueAt) {
+    return <span className="muted">—</span>;
+  }
+  const formatted = dueAt.toISOString().slice(0, 10);
+  return (
+    <span>
+      <span className={`badge ${state === 'OVERDUE' ? 'critical' : 'neutral'}`}>
+        {state.replaceAll('_', ' ').toLowerCase()}
+      </span>
+      <div className="mono muted">{formatted}</div>
+    </span>
+  );
+}
 
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
 const STATUSES = ['OPEN', 'TRIAGED', 'IN_PROGRESS', 'RESOLVED', 'ACCEPTED_RISK', 'FALSE_POSITIVE'];
@@ -39,6 +61,7 @@ export default async function FindingsPage({
     search: searchParam(rawParams, 'search'),
     severity: enumSearchParam(rawParams, 'severity', findingSeveritySchema),
     status: enumSearchParam(rawParams, 'status', findingStatusSchema),
+    overdue: searchParam(rawParams, 'overdue'),
   });
 
   const [result, options] = await Promise.all([
@@ -46,6 +69,7 @@ export default async function FindingsPage({
       search: query.search ?? null,
       ...(query.severity ? { severity: query.severity } : {}),
       ...(query.status ? { status: query.status } : {}),
+      overdue: query.overdue ?? false,
       page: query.page,
       pageSize: query.pageSize,
       sort: query.sort,
@@ -98,6 +122,18 @@ export default async function FindingsPage({
             ))}
           </select>
         </label>
+        <label className="field" htmlFor="overdue" style={{ alignSelf: 'end' }}>
+          <span>
+            <input
+              id="overdue"
+              name="overdue"
+              type="checkbox"
+              value="true"
+              defaultChecked={query.overdue ?? false}
+            />{' '}
+            Overdue only
+          </span>
+        </label>
         <button type="submit" className="secondary">
           Filter
         </button>
@@ -114,6 +150,8 @@ export default async function FindingsPage({
               <tr>
                 <th>Finding</th>
                 <th>Severity</th>
+                <th>Risk</th>
+                <th>Remediation</th>
                 <th>Status</th>
                 <th>Asset</th>
                 <th>Owner</th>
@@ -130,6 +168,10 @@ export default async function FindingsPage({
                     <span className={`badge ${finding.severity.toLowerCase()}`}>
                       {finding.severity}
                     </span>
+                  </td>
+                  <td className="mono small">{finding.riskScore}</td>
+                  <td className="small">
+                    <DueBadge dueAt={finding.dueAt} status={finding.status} />
                   </td>
                   <td className="small">{finding.status.replaceAll('_', ' ')}</td>
                   <td className="small">{finding.asset?.name ?? '—'}</td>

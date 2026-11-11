@@ -16,6 +16,7 @@ import {
   findingFingerprint,
   isUniqueConstraintError,
   paginationMeta,
+  riskFields,
 } from './shared';
 
 export interface FindingListQuery {
@@ -25,11 +26,24 @@ export interface FindingListQuery {
   assetId?: string;
   incidentId?: string;
   assignedToId?: string;
+  /** Only findings past their remediation deadline and still open. */
+  overdue?: boolean;
   page: number;
   pageSize: number;
-  sort: 'createdAt' | 'updatedAt' | 'severity' | 'status' | 'title' | 'lastSeenAt';
+  sort:
+    | 'createdAt'
+    | 'updatedAt'
+    | 'severity'
+    | 'status'
+    | 'title'
+    | 'lastSeenAt'
+    | 'riskScore'
+    | 'dueAt';
   direction: 'asc' | 'desc';
 }
+
+const CLOSED_STATUSES: FindingStatus[] = ['RESOLVED', 'ACCEPTED_RISK', 'FALSE_POSITIVE'];
+const OPEN_FINDING_STATUSES: FindingStatus[] = ['OPEN', 'TRIAGED', 'IN_PROGRESS'];
 
 const FINDING_SUMMARY_SELECT = {
   id: true,
@@ -39,6 +53,8 @@ const FINDING_SUMMARY_SELECT = {
   source: true,
   cveId: true,
   cvssScore: true,
+  riskScore: true,
+  dueAt: true,
   firstSeenAt: true,
   lastSeenAt: true,
   resolvedAt: true,
@@ -55,13 +71,23 @@ function serializeFinding<T extends { cvssScore: Prisma.Decimal | null }>(findin
 }
 
 export async function listFindings(organizationId: string, query: FindingListQuery) {
+  // "Overdue" means open work past its deadline. A closed status combined with
+  // it can only ever be empty, so the filter short-circuits instead of returning
+  // resolved findings just because they once missed their deadline.
+  const statusFilter: Prisma.FindingWhereInput['status'] = query.overdue
+    ? query.status && CLOSED_STATUSES.includes(query.status)
+      ? { in: [] }
+      : (query.status ?? { in: OPEN_FINDING_STATUSES })
+    : query.status;
+
   const where: Prisma.FindingWhereInput = {
     organizationId,
-    ...(query.status ? { status: query.status } : {}),
+    ...(statusFilter ? { status: statusFilter } : {}),
     ...(query.severity ? { severity: query.severity } : {}),
     ...(query.assetId ? { assetId: query.assetId } : {}),
     ...(query.incidentId ? { incidentId: query.incidentId } : {}),
     ...(query.assignedToId ? { assignedToId: query.assignedToId } : {}),
+    ...(query.overdue ? { dueAt: { lt: new Date() } } : {}),
     ...(query.search
       ? {
           OR: [
@@ -169,6 +195,26 @@ export async function createFinding(
     source,
   });
 
+  // The asset's criticality feeds the risk score, so it is loaded once here
+  // rather than in a second assertion query. A missing asset still fails closed.
+  const asset = assetId
+    ? await prisma.asset.findFirst({
+        where: { id: assetId, organizationId: ctx.organization.id },
+        select: { criticality: true },
+      })
+    : null;
+  if (assetId && !asset) {
+    throw notFound('Asset not found in this organization.');
+  }
+
+  const firstSeenAt = input.firstSeenAt ?? new Date();
+  const risk = riskFields({
+    severity: input.severity,
+    cvssScore: input.cvssScore ?? null,
+    assetCriticality: asset?.criticality ?? null,
+    firstSeenAt,
+  });
+
   try {
     return await prisma.$transaction(async (tx) => {
       const finding = await tx.finding.create({
@@ -186,7 +232,9 @@ export async function createFinding(
           cveId: input.cveId ?? null,
           cvssScore: input.cvssScore ?? null,
           remediation: input.remediation ?? null,
-          ...(input.firstSeenAt ? { firstSeenAt: input.firstSeenAt } : {}),
+          firstSeenAt,
+          riskScore: risk.riskScore,
+          dueAt: risk.dueAt,
         },
         select: FINDING_SUMMARY_SELECT,
       });
@@ -244,6 +292,8 @@ export async function updateFinding(
       assetId: true,
       assignedToId: true,
       incidentId: true,
+      cvssScore: true,
+      firstSeenAt: true,
     },
   });
 
@@ -275,11 +325,42 @@ export async function updateFinding(
           source: existing.source,
         });
 
+  // The risk score is derived from three inputs. Recompute it only when one of
+  // them changes, and always from firstSeenAt so the deadline does not drift
+  // forward each time a finding is edited.
+  const nextSeverity = input.severity ?? existing.severity;
+  const nextCvss =
+    input.cvssScore !== undefined
+      ? input.cvssScore
+      : existing.cvssScore === null
+        ? null
+        : Number(existing.cvssScore);
+  const riskInputsChanged =
+    nextSeverity !== existing.severity ||
+    nextCvss !== (existing.cvssScore === null ? null : Number(existing.cvssScore)) ||
+    nextAssetId !== existing.assetId;
+
+  let derived: { riskScore: number; dueAt: Date } | null = null;
+  if (riskInputsChanged) {
+    const asset = nextAssetId
+      ? await prisma.asset.findFirst({
+          where: { id: nextAssetId, organizationId: ctx.organization.id },
+          select: { criticality: true },
+        })
+      : null;
+    derived = riskFields({
+      severity: nextSeverity,
+      cvssScore: nextCvss,
+      assetCriticality: asset?.criticality ?? null,
+      firstSeenAt: existing.firstSeenAt,
+    });
+  }
+
   try {
     return await prisma.$transaction(async (tx) => {
       const finding = await tx.finding.update({
         where: { id: existing.id },
-        data: { ...input, fingerprint },
+        data: { ...input, fingerprint, ...(derived ?? {}) },
         select: FINDING_SUMMARY_SELECT,
       });
 
@@ -292,7 +373,15 @@ export async function updateFinding(
         targetType: 'finding',
         targetId: finding.id,
         summary: `Finding "${finding.title}" updated`,
-        metadata: { changedFields: Object.keys(input), before: existing },
+        metadata: {
+          changedFields: Object.keys(input),
+          // The snapshot is written to audit metadata, so it has to be plain
+          // JSON: Prisma's Decimal is a class instance and cannot be stored.
+          before: {
+            ...existing,
+            cvssScore: existing.cvssScore === null ? null : Number(existing.cvssScore),
+          },
+        },
         ipAddress: ctx.meta.ipAddress,
         userAgent: ctx.meta.userAgent,
         requestId: ctx.meta.requestId,
@@ -525,21 +614,45 @@ async function applyImport(
 
     let createdFindings: Array<{ id: string; title: string }> = [];
     if (toCreate.length > 0) {
+      // Imported findings get the same derived fields as manually created ones.
+      // Criticality is resolved from the assets already validated above, in one
+      // pass, so a large import does not issue one query per row.
+      const assetIdsToLoad = [...new Set(toCreate.flatMap((entry) => entry.assetId ?? []))];
+      const criticalityRows =
+        assetIdsToLoad.length === 0
+          ? []
+          : await tx.asset.findMany({
+              where: { organizationId: ctx.organization.id, id: { in: assetIdsToLoad } },
+              select: { id: true, criticality: true },
+            });
+      const criticalityById = new Map(criticalityRows.map((row) => [row.id, row.criticality]));
+      const importedAt = new Date();
+
       await tx.finding.createMany({
-        data: toCreate.map((entry) => ({
-          organizationId: ctx.organization.id,
-          createdById: ctx.user.id,
-          title: entry.item.title,
-          description: entry.item.description ?? null,
-          severity: entry.item.severity,
-          status: 'OPEN' as const,
-          source: 'IMPORT' as const,
-          fingerprint: entry.fingerprint,
-          assetId: entry.assetId,
-          cveId: entry.item.cveId ?? null,
-          cvssScore: entry.item.cvssScore ?? null,
-          remediation: entry.item.remediation ?? null,
-        })),
+        data: toCreate.map((entry) => {
+          const risk = riskFields({
+            severity: entry.item.severity,
+            cvssScore: entry.item.cvssScore ?? null,
+            assetCriticality: entry.assetId ? (criticalityById.get(entry.assetId) ?? null) : null,
+            firstSeenAt: importedAt,
+          });
+          return {
+            organizationId: ctx.organization.id,
+            createdById: ctx.user.id,
+            title: entry.item.title,
+            description: entry.item.description ?? null,
+            severity: entry.item.severity,
+            status: 'OPEN' as const,
+            source: 'IMPORT' as const,
+            fingerprint: entry.fingerprint,
+            assetId: entry.assetId,
+            cveId: entry.item.cveId ?? null,
+            cvssScore: entry.item.cvssScore ?? null,
+            remediation: entry.item.remediation ?? null,
+            riskScore: risk.riskScore,
+            dueAt: risk.dueAt,
+          };
+        }),
       });
 
       createdFindings = await tx.finding.findMany({

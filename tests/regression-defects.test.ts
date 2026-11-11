@@ -240,6 +240,54 @@ test('organization slugs stay unique when names collide', async () => {
   assert.notEqual(first.id, second.id);
 });
 
+test('updating a scored finding succeeds and audits a JSON-safe snapshot', async () => {
+  // Regression: the audit snapshot of a finding used to carry Prisma's Decimal
+  // for cvssScore. Decimal is a class instance, so redaction copied an
+  // enumerable `constructor` function into the metadata and Prisma refused to
+  // serialise it, turning every severity change into a 500.
+  const tenant = await createTenant({ role: 'ANALYST' });
+  const asset = await createAsset(tenant.ctx, {
+    name: 'Gateway',
+    type: 'WEB_APPLICATION',
+    identifier: 'gw.example',
+    description: null,
+    criticality: 'HIGH',
+    status: 'ACTIVE',
+  });
+
+  await importFindings(tenant.ctx, [
+    { title: 'Reflected XSS', severity: 'HIGH', assetId: asset.id, cvssScore: 7.5 },
+  ]);
+  const finding = await prisma.finding.findFirstOrThrow({
+    where: { organizationId: tenant.organization.id },
+    select: { id: true, riskScore: true, dueAt: true, firstSeenAt: true },
+  });
+
+  const updated = await updateFinding(tenant.ctx, finding.id, {
+    severity: 'CRITICAL',
+    remediation: 'Encode output.',
+  });
+
+  assert.equal(updated.severity, 'CRITICAL');
+  // Re-scored and re-scheduled from the same first observation.
+  assert.ok(updated.riskScore > finding.riskScore);
+  assert.deepEqual(
+    updated.dueAt,
+    new Date(finding.firstSeenAt.getTime() + 7 * 86_400_000),
+    'CRITICAL deadline should be seven days from first seen',
+  );
+
+  const event = await prisma.auditEvent.findFirstOrThrow({
+    where: { organizationId: tenant.organization.id, action: 'finding.updated' },
+    select: { metadata: true },
+  });
+  const before = (event.metadata as { before?: Record<string, unknown> }).before;
+  assert.ok(before);
+  assert.equal(before.cvssScore, 7.5);
+  // Whatever the snapshot holds, it must survive a JSON round trip.
+  assert.deepEqual(JSON.parse(JSON.stringify(event.metadata)), event.metadata);
+});
+
 test('members are resolved regardless of email case', async () => {
   const owner = await createTenant({ role: 'OWNER' });
   const candidate = await createUser();

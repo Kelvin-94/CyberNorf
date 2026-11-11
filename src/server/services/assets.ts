@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
 import type { TenantContext } from '@/server/authz/context';
 import { conflict, notFound } from '@/server/errors';
-import { findingFingerprint, isUniqueConstraintError, paginationMeta } from './shared';
+import { findingFingerprint, isUniqueConstraintError, paginationMeta, riskFields } from './shared';
 
 export interface AssetListQuery {
   search?: string | null;
@@ -15,6 +15,13 @@ export interface AssetListQuery {
   sort: 'name' | 'createdAt' | 'updatedAt' | 'criticality';
   direction: 'asc' | 'desc';
 }
+
+/**
+ * Bounds for re-scoring the findings of an asset whose criticality changed.
+ * 200 rows per query and 25 pages cap one edit at 5,000 re-scored findings.
+ */
+const RISK_RESCORE_PAGE = 200;
+const RISK_RESCORE_MAX_PAGES = 25;
 
 const ASSET_SUMMARY_SELECT = {
   id: true,
@@ -179,6 +186,43 @@ export async function updateAsset(
         data: input,
         select: ASSET_SUMMARY_SELECT,
       });
+
+      // Criticality is one of the inputs to a finding's risk score, so a change
+      // here must not leave stale priorities behind. Re-scoring is bounded: at
+      // most RISK_RESCORE_PAGE findings per statement, one statement per page,
+      // and a hard page cap so a single asset edit cannot run unbounded work.
+      if (input.criticality && input.criticality !== existing.criticality) {
+        let cursor: string | undefined;
+        for (let page = 0; page < RISK_RESCORE_MAX_PAGES; page += 1) {
+          const rows = await tx.finding.findMany({
+            where: { organizationId: ctx.organization.id, assetId: existing.id },
+            select: { id: true, severity: true, cvssScore: true, firstSeenAt: true },
+            orderBy: { id: 'asc' },
+            take: RISK_RESCORE_PAGE,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+          });
+          if (rows.length === 0) {
+            break;
+          }
+          for (const row of rows) {
+            const risk = riskFields({
+              severity: row.severity,
+              cvssScore: row.cvssScore === null ? null : Number(row.cvssScore),
+              assetCriticality: asset.criticality,
+              firstSeenAt: row.firstSeenAt,
+            });
+            await tx.finding.update({
+              where: { id: row.id },
+              data: { riskScore: risk.riskScore, dueAt: risk.dueAt },
+              select: { id: true },
+            });
+          }
+          cursor = rows[rows.length - 1]?.id;
+          if (rows.length < RISK_RESCORE_PAGE) {
+            break;
+          }
+        }
+      }
 
       await appendAuditEvent(tx, {
         organizationId: ctx.organization.id,

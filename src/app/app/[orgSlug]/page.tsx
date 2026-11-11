@@ -52,6 +52,11 @@ export default async function DashboardPage({ params }: { params: Promise<{ orgS
           </p>
         </div>
         <div className="stat">
+          <p className="stat-label">Overdue findings</p>
+          <p className="stat-value">{summary.remediation.overdue}</p>
+          <p className="small muted">{summary.remediation.dueSoon} due in the next 7 days</p>
+        </div>
+        <div className="stat">
           <p className="stat-label">Active assets</p>
           <p className="stat-value">{summary.assets.active}</p>
           <p className="small muted">
@@ -76,6 +81,47 @@ export default async function DashboardPage({ params }: { params: Promise<{ orgS
         className="grid"
         style={{ marginTop: '1.5rem', gridTemplateColumns: 'repeat(auto-fit, minmax(22rem, 1fr))' }}
       >
+        <section className="card">
+          <h2>Remediation health</h2>
+          <p className="small muted">
+            Last {summary.remediation.windowDays} days · {summary.remediation.resolutionSampleSize}{' '}
+            resolved
+          </p>
+          <table className="data-table">
+            <tbody>
+              <tr>
+                <th>Met remediation deadline</th>
+                <td>
+                  {summary.remediation.slaCompliance === null
+                    ? 'No data yet'
+                    : `${summary.remediation.slaCompliance}%`}
+                </td>
+              </tr>
+              <tr>
+                <th>Mean time to resolve</th>
+                <td>
+                  {summary.remediation.meanTimeToResolveDays === null
+                    ? 'No data yet'
+                    : `${summary.remediation.meanTimeToResolveDays} days`}
+                </td>
+              </tr>
+              <tr>
+                <th>Open findings</th>
+                <td>{summary.remediation.open}</td>
+              </tr>
+              <tr>
+                <th>Overdue / due soon</th>
+                <td>
+                  {summary.remediation.overdue} / {summary.remediation.dueSoon}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="small" style={{ marginTop: '0.75rem' }}>
+            <Link href={`${base}/findings?overdue=true`}>Review overdue findings</Link>
+          </p>
+        </section>
+
         <section className="card">
           <h2>Priority findings</h2>
           {summary.latestFindings.length === 0 ? (

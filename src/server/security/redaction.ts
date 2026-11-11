@@ -154,6 +154,13 @@ export function redactValue(value: unknown, depth = 0): unknown {
   if (typeof value === 'string') {
     return redactString(value);
   }
+  // Audit metadata must stay JSON-serialisable. A function or symbol reaching
+  // this point (for example a class instance exposing an enumerable
+  // `constructor`) would otherwise be copied into the payload and make the
+  // whole audit write fail, taking the user's mutation down with it.
+  if (typeof value === 'function' || typeof value === 'symbol') {
+    return undefined;
+  }
   if (value === null || typeof value !== 'object') {
     return value;
   }
@@ -164,7 +171,14 @@ export function redactValue(value: unknown, depth = 0): unknown {
     return REDACTED;
   }
   if (Array.isArray(value)) {
-    return value.slice(0, MAX_ENTRIES).map((entry) => redactValue(entry, depth + 1));
+    return (
+      value
+        .slice(0, MAX_ENTRIES)
+        .map((entry) => redactValue(entry, depth + 1))
+        // Mapping a dropped function would leave a hole that JSON renders as
+        // `null`; removing it keeps the array meaningful after redaction.
+        .filter((entry) => entry !== undefined)
+    );
   }
 
   const output: Record<string, unknown> = {};
@@ -181,7 +195,13 @@ export function redactValue(value: unknown, depth = 0): unknown {
     if (entry === undefined) {
       continue;
     }
-    output[key] = redactValue(entry, depth + 1);
+    const redacted = redactValue(entry, depth + 1);
+    // Dropping the key rather than writing `undefined` keeps the result a
+    // valid JSON value for Prisma.
+    if (redacted === undefined) {
+      continue;
+    }
+    output[key] = redacted;
   }
   return output;
 }

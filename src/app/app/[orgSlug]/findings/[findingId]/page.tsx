@@ -5,6 +5,7 @@ import { ActionButton } from '@/components/action-button';
 import { ActionForm } from '@/components/action-form';
 import { StatusControl } from '@/components/status-control';
 import { can } from '@/server/authz/roles';
+import { remediationState } from '@/server/domain/risk';
 import { allowedFindingTransitions } from '@/server/domain/transitions';
 import { AppError } from '@/server/errors';
 import { getFindingDetail, listFindingFormOptions } from '@/server/services/findings';
@@ -87,6 +88,23 @@ export default async function FindingDetailPage({
           <div>
             <dt>CVSS</dt>
             <dd>{finding.cvssScore === null ? '—' : finding.cvssScore.toFixed(1)}</dd>
+          </div>
+          <div>
+            <dt>Risk score</dt>
+            <dd>{finding.riskScore} / 100</dd>
+          </div>
+          <div>
+            <dt>Remediation due</dt>
+            <dd>
+              {finding.dueAt === null
+                ? '—'
+                : `${finding.dueAt.toISOString().slice(0, 10)} (${remediationState({
+                    dueAt: finding.dueAt,
+                    status: finding.status,
+                  })
+                    .replaceAll('_', ' ')
+                    .toLowerCase()})`}
+            </dd>
           </div>
           <div>
             <dt>Incident</dt>

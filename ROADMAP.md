@@ -36,7 +36,7 @@ Build one complete, useful workflow rather than a wide collection of unfinished 
 - [ ] SOC case and incident workflow.
 - [ ] Alert and IOC records with provenance.
 - [ ] Evidence attachment and integrity metadata.
-- [ ] Finding severity, rationale, and remediation tracking.
+- [x] Finding severity, rationale, and remediation tracking. _Implemented:_ every finding carries a derived risk score and a severity-based remediation deadline, the list filters and sorts on both, and the dashboard reports overdue work, SLA compliance, and mean time to resolve (see [docs/FINDINGS.md](docs/FINDINGS.md)).
 - [ ] Search and export constrained by authorization.
 - [ ] Audit history for important case changes.
 - [ ] Unit and integration tests for expected and denied actions.

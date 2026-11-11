@@ -88,10 +88,24 @@ export const findingQuerySchema = z.object({
   assetId: cuidLikeSchema.optional(),
   incidentId: cuidLikeSchema.optional(),
   assignedToId: cuidLikeSchema.optional(),
+  // Explicit string parsing: z.coerce.boolean() would treat "false" as true.
+  overdue: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
   page: z.coerce.number().int().min(1).max(10000).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   sort: z
-    .enum(['createdAt', 'updatedAt', 'severity', 'status', 'title', 'lastSeenAt'])
+    .enum([
+      'createdAt',
+      'updatedAt',
+      'severity',
+      'status',
+      'title',
+      'lastSeenAt',
+      'riskScore',
+      'dueAt',
+    ])
     .default('createdAt'),
   direction: z.enum(['asc', 'desc']).default('desc'),
 });
