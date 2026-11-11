@@ -415,10 +415,12 @@ export async function deleteEvidenceFile(
  * deliberately not silent about a missing file: losing an artifact is exactly the
  * event an evidence store exists to detect.
  */
-export async function sweepEvidenceIntegrity(options: {
-  organizationId?: string;
-  limit?: number;
-} = {}): Promise<{
+export async function sweepEvidenceIntegrity(
+  options: {
+    organizationId?: string;
+    limit?: number;
+  } = {},
+): Promise<{
   checked: number;
   intact: number;
   mismatched: number;
@@ -456,7 +458,11 @@ export async function sweepEvidenceIntegrity(options: {
       result.skipped += 1;
       continue;
     }
-    const outcome = await verifyArtifact({ root, blobKey: row.blobKey, expectedSha256: row.sha256 });
+    const outcome = await verifyArtifact({
+      root,
+      blobKey: row.blobKey,
+      expectedSha256: row.sha256,
+    });
     await prisma.controlEvidence.update({
       where: { id: row.id },
       data: { integrityStatus: outcome.outcome, integrityCheckedAt: checkedAt },

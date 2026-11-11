@@ -33,13 +33,13 @@ The first release supports exactly those two integration directions:
 
 Everything else is explicitly out of the first release:
 
-| Candidate | Why not now | What would reopen it |
-| --- | --- | --- |
-| SIEM (syslog, CEF, Splunk HEC) | Duplicates the audit trail into a system with different retention and access rules; needs a stable event schema and back-pressure before it is safe to ship. | A design partner who must ingest the audit chain into an existing SIEM, plus a versioned event schema. |
-| SOAR / automation callbacks | Requires inbound authenticated actions with replay protection and per-action authorization; that is Phase 4 machinery. | The Phase 4 scope model and job isolation landing first. |
-| Ticketing (Jira, ServiceNow) | Bidirectional sync creates a second source of truth for findings; one-way creation is a smaller feature that can wait for demand. | Repeated requests to create tickets from findings, with an idempotency design. |
-| Gateway / firewall / EDR connectors | Pulling device data turns the product into a collector with its own credential vault and rate-limit budget. | A concrete feed and a proven need that the agent inventory cannot cover. |
-| Chat (Slack, Teams) | Webhooks already reach chat through an incoming-webhook URL; a native app adds OAuth and a second permission model for little gain. | Demand for interactive actions from chat, which needs the same inbound-auth work as SOAR. |
+| Candidate                           | Why not now                                                                                                                                                  | What would reopen it                                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| SIEM (syslog, CEF, Splunk HEC)      | Duplicates the audit trail into a system with different retention and access rules; needs a stable event schema and back-pressure before it is safe to ship. | A design partner who must ingest the audit chain into an existing SIEM, plus a versioned event schema. |
+| SOAR / automation callbacks         | Requires inbound authenticated actions with replay protection and per-action authorization; that is Phase 4 machinery.                                       | The Phase 4 scope model and job isolation landing first.                                               |
+| Ticketing (Jira, ServiceNow)        | Bidirectional sync creates a second source of truth for findings; one-way creation is a smaller feature that can wait for demand.                            | Repeated requests to create tickets from findings, with an idempotency design.                         |
+| Gateway / firewall / EDR connectors | Pulling device data turns the product into a collector with its own credential vault and rate-limit budget.                                                  | A concrete feed and a proven need that the agent inventory cannot cover.                               |
+| Chat (Slack, Teams)                 | Webhooks already reach chat through an incoming-webhook URL; a native app adds OAuth and a second permission model for little gain.                          | Demand for interactive actions from chat, which needs the same inbound-auth work as SOAR.              |
 
 ## Consequences
 

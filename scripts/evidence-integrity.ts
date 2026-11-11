@@ -37,9 +37,7 @@ function usage(message?: string): never {
   if (message) {
     console.error(`Error: ${message}`);
   }
-  console.error(
-    'Usage: npm run evidence:verify -- [--org <slug-or-id>] [--limit <n>] [--all]',
-  );
+  console.error('Usage: npm run evidence:verify -- [--org <slug-or-id>] [--limit <n>] [--all]');
   process.exit(1);
 }
 

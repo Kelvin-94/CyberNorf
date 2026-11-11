@@ -176,7 +176,13 @@ test('a content type outside the allow-list is refused before anything is writte
 
 test('a blob key cannot escape the storage root', () => {
   const dir = root();
-  for (const key of ['../../etc/passwd', 'a/../../b', '/etc/passwd', '..', 'abcdef1234567890ABCDEF']) {
+  for (const key of [
+    '../../etc/passwd',
+    'a/../../b',
+    '/etc/passwd',
+    '..',
+    'abcdef1234567890ABCDEF',
+  ]) {
     assert.throws(() => blobPath(dir, key), /unexpected error|cannot|invalid/i);
   }
 });

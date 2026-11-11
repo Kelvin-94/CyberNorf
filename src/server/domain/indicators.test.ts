@@ -13,16 +13,28 @@ function normalized(type: string, value: string): { type: string; value: string 
 }
 
 test('domains collapse to lower case and lose a trailing root dot', () => {
-  assert.deepEqual(normalized('DOMAIN', 'EVIL.example.'), { type: 'DOMAIN', value: 'evil.example' });
-  assert.deepEqual(normalized('DOMAIN', '  evil.example  '), { type: 'DOMAIN', value: 'evil.example' });
+  assert.deepEqual(normalized('DOMAIN', 'EVIL.example.'), {
+    type: 'DOMAIN',
+    value: 'evil.example',
+  });
+  assert.deepEqual(normalized('DOMAIN', '  evil.example  '), {
+    type: 'DOMAIN',
+    value: 'evil.example',
+  });
 });
 
 test('a wildcard domain keeps the part that can be matched', () => {
-  assert.deepEqual(normalized('DOMAIN', '*.evil.example'), { type: 'DOMAIN', value: 'evil.example' });
+  assert.deepEqual(normalized('DOMAIN', '*.evil.example'), {
+    type: 'DOMAIN',
+    value: 'evil.example',
+  });
 });
 
 test('defanged values are refanged before storage', () => {
-  assert.deepEqual(normalized('DOMAIN', 'evil[.]example'), { type: 'DOMAIN', value: 'evil.example' });
+  assert.deepEqual(normalized('DOMAIN', 'evil[.]example'), {
+    type: 'DOMAIN',
+    value: 'evil.example',
+  });
   assert.deepEqual(normalized('URL', 'hxxps://evil[.]example/path'), {
     type: 'URL',
     value: 'https://evil.example/path',
@@ -60,8 +72,14 @@ test('an email normalises its domain but not its local part case-sensitive rules
 });
 
 test('trailing punctuation copied from prose is stripped', () => {
-  assert.deepEqual(normalized('DOMAIN', 'evil.example,'), { type: 'DOMAIN', value: 'evil.example' });
-  assert.deepEqual(normalized('DOMAIN', '`evil.example`'), { type: 'DOMAIN', value: 'evil.example' });
+  assert.deepEqual(normalized('DOMAIN', 'evil.example,'), {
+    type: 'DOMAIN',
+    value: 'evil.example',
+  });
+  assert.deepEqual(normalized('DOMAIN', '`evil.example`'), {
+    type: 'DOMAIN',
+    value: 'evil.example',
+  });
 });
 
 test('the original spelling is preserved for display when it differs', () => {
@@ -90,11 +108,26 @@ test('a hash is inferred as a hash, never as a domain or an address', () => {
 });
 
 test('values that cannot be matched are refused with a message naming the problem', () => {
-  assert.throws(() => normalizeIndicator({ type: 'DOMAIN', value: 'localhost' }), IndicatorFormatError);
-  assert.throws(() => normalizeIndicator({ type: 'DOMAIN', value: 'not a domain' }), IndicatorFormatError);
-  assert.throws(() => normalizeIndicator({ type: 'IPV4', value: '999.1.1.1' }), IndicatorFormatError);
-  assert.throws(() => normalizeIndicator({ type: 'URL', value: 'evil.example/no-scheme' }), IndicatorFormatError);
-  assert.throws(() => normalizeIndicator({ type: 'URL', value: 'ftp://evil.example' }), IndicatorFormatError);
+  assert.throws(
+    () => normalizeIndicator({ type: 'DOMAIN', value: 'localhost' }),
+    IndicatorFormatError,
+  );
+  assert.throws(
+    () => normalizeIndicator({ type: 'DOMAIN', value: 'not a domain' }),
+    IndicatorFormatError,
+  );
+  assert.throws(
+    () => normalizeIndicator({ type: 'IPV4', value: '999.1.1.1' }),
+    IndicatorFormatError,
+  );
+  assert.throws(
+    () => normalizeIndicator({ type: 'URL', value: 'evil.example/no-scheme' }),
+    IndicatorFormatError,
+  );
+  assert.throws(
+    () => normalizeIndicator({ type: 'URL', value: 'ftp://evil.example' }),
+    IndicatorFormatError,
+  );
   assert.throws(() => normalizeIndicator({ type: 'SHA256', value: 'short' }), IndicatorFormatError);
   assert.throws(() => normalizeIndicator({ value: '' }), IndicatorFormatError);
   assert.throws(() => normalizeIndicator({ value: 'just some words here' }), IndicatorFormatError);

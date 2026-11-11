@@ -351,7 +351,8 @@ export function validateEnvironment(
     if (!isAbsolute(evidenceDir)) {
       errors.push({
         variable: 'EVIDENCE_DIR',
-        message: 'must be an absolute path so the location does not depend on the working directory.',
+        message:
+          'must be an absolute path so the location does not depend on the working directory.',
         severity: 'error',
       });
     } else {

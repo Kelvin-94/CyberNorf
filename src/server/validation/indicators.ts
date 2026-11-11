@@ -110,7 +110,10 @@ export const importIndicatorsSchema = z
           .strict(),
       )
       .min(1, 'Supply at least one indicator.')
-      .max(IMPORT_MAX_INDICATORS, `A single import is limited to ${IMPORT_MAX_INDICATORS} indicators.`),
+      .max(
+        IMPORT_MAX_INDICATORS,
+        `A single import is limited to ${IMPORT_MAX_INDICATORS} indicators.`,
+      ),
   })
   .strict();
 
@@ -122,10 +125,9 @@ export const linkIndicatorSchema = z
     note: z.string().trim().max(1000).nullable().optional(),
   })
   .strict()
-  .refine(
-    (value) => Boolean(value.findingId) !== Boolean(value.incidentId),
-    { message: 'Supply exactly one of findingId or incidentId.' },
-  );
+  .refine((value) => Boolean(value.findingId) !== Boolean(value.incidentId), {
+    message: 'Supply exactly one of findingId or incidentId.',
+  });
 
 export const indicatorQuerySchema = z
   .object({

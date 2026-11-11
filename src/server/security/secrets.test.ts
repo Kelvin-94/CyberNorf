@@ -81,12 +81,7 @@ test('a tampered authentication tag is rejected', () => {
   modifiedTag[0] = (modifiedTag[0] as number) ^ 0x80;
   assert.ok(!modifiedTag.equals(tag), 'the tampered tag must actually differ');
 
-  const tampered = [
-    parts[0],
-    parts[1],
-    modifiedTag.toString('base64url'),
-    parts[3],
-  ].join('.');
+  const tampered = [parts[0], parts[1], modifiedTag.toString('base64url'), parts[3]].join('.');
 
   assert.throws(() => withSecret(FIRST, () => openSecret(tampered)));
 });

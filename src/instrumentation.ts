@@ -10,9 +10,8 @@ export async function register(): Promise<void> {
   }
 
   const { formatEnvReport, validateEnvironment } = await import('@/server/config/env');
-  const { fingerprintConfiguration, recordConfigurationFingerprint } = await import(
-    '@/server/config/fingerprint'
-  );
+  const { fingerprintConfiguration, recordConfigurationFingerprint } =
+    await import('@/server/config/fingerprint');
   const { describeSecretSources, loadFileSecrets } = await import('@/server/config/secrets-file');
   const { logger, resolveLogLevel } = await import('@/server/logging/logger');
 

@@ -21,7 +21,12 @@ const ENVELOPE_OVERHEAD_BYTES = 64 * 1024;
 
 export interface ParsedMultipart {
   /** The uploaded file, or null when the request carried only fields. */
-  file: { name: string; type: string; size: number; stream: () => ReadableStream<Uint8Array> } | null;
+  file: {
+    name: string;
+    type: string;
+    size: number;
+    stream: () => ReadableStream<Uint8Array>;
+  } | null;
   fields: Record<string, string>;
 }
 

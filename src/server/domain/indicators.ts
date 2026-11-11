@@ -66,7 +66,9 @@ function unwrap(raw: string): string {
  */
 function refang(value: string): string {
   return value
-    .replace(/hxxps?:\/\//gi, (match) => (match.toLowerCase().startsWith('hxxps') ? 'https://' : 'http://'))
+    .replace(/hxxps?:\/\//gi, (match) =>
+      match.toLowerCase().startsWith('hxxps') ? 'https://' : 'http://',
+    )
     .replace(/\[\.\]/g, '.')
     .replace(/\(\.\)/g, '.')
     .replace(/\[:\]/g, ':')
@@ -84,7 +86,9 @@ function normalizeDomain(input: string): string {
   const bare = value.startsWith('*.') ? value.slice(2) : value;
   const labels = bare.split('.');
   if (labels.length < 2) {
-    throw new IndicatorFormatError('Domain must have at least two labels, for example example.com.');
+    throw new IndicatorFormatError(
+      'Domain must have at least two labels, for example example.com.',
+    );
   }
   for (const label of labels) {
     if (!DOMAIN_LABEL.test(label)) {
@@ -175,7 +179,9 @@ export function normalizeIndicator(input: {
     throw new IndicatorFormatError('Indicator value is empty.');
   }
   if (unfanged.length > MAX_INDICATOR_LENGTH) {
-    throw new IndicatorFormatError(`Indicator value is longer than ${MAX_INDICATOR_LENGTH} characters.`);
+    throw new IndicatorFormatError(
+      `Indicator value is longer than ${MAX_INDICATOR_LENGTH} characters.`,
+    );
   }
 
   const resolved = input.type ?? inferIndicatorType(unfanged);

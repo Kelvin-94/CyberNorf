@@ -23,12 +23,12 @@ organization, and who do not run a SOC platform.
 
 **Problem:** they cannot answer three questions with the tools they can afford to operate:
 
-1. *What is exposed, what is wrong with it, and what are we doing about it?* Findings live
+1. _What is exposed, what is wrong with it, and what are we doing about it?_ Findings live
    in spreadsheets and inboxes; nothing connects a check result to an owner, a deadline and
    a fix.
-2. *Can we prove what we did?* Auditors ask for control evidence and a history of who
+2. _Can we prove what we did?_ Auditors ask for control evidence and a history of who
    changed what. Screenshots in a shared drive are not a chain of custody.
-3. *Who and what can reach our systems?* Service accounts, API clients and monitoring
+3. _Who and what can reach our systems?_ Service accounts, API clients and monitoring
    agents are outside any inventory, and nobody reviews them.
 
 **Product consequence:** the shipped workflow is the case record, not detection. The

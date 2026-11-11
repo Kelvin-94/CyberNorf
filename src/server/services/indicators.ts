@@ -177,7 +177,9 @@ function prepare(input: IndicatorInput) {
       throw badRequest('lastSeenAt cannot be earlier than firstSeenAt.');
     }
     if (input.expiresAt && input.expiresAt.getTime() <= lastSeenAt.getTime()) {
-      throw badRequest('expiresAt must be later than lastSeenAt, or the indicator would be born expired.');
+      throw badRequest(
+        'expiresAt must be later than lastSeenAt, or the indicator would be born expired.',
+      );
     }
     return { normalized, firstSeenAt, lastSeenAt };
   } catch (error) {
@@ -530,11 +532,7 @@ export interface LinkInput {
  * against the tenant before the link is written, so a caller cannot attach an
  * indicator to another tenant's finding by guessing its id.
  */
-export async function linkIndicator(
-  ctx: TenantContext,
-  indicatorId: string,
-  input: LinkInput,
-) {
+export async function linkIndicator(ctx: TenantContext, indicatorId: string, input: LinkInput) {
   const targets = [input.findingId, input.incidentId].filter(Boolean);
   if (targets.length !== 1) {
     throw badRequest('Supply exactly one of findingId or incidentId.');
@@ -651,7 +649,9 @@ export async function listIndicatorsForTarget(
   const links = await prisma.indicatorLink.findMany({
     where: {
       organizationId,
-      ...(('findingId' in target ? { findingId: target.findingId } : { incidentId: target.incidentId })),
+      ...('findingId' in target
+        ? { findingId: target.findingId }
+        : { incidentId: target.incidentId }),
     },
     select: {
       id: true,

@@ -64,7 +64,10 @@ const ALLOWED = new Set<string>(FILE_SECRET_VARIABLES);
  * object and a temporary directory, and so the startup hook stays the only place
  * that mutates the real environment.
  */
-export function loadFileSecrets(env: Record<string, string | undefined>, directory: string): SecretsFileResult {
+export function loadFileSecrets(
+  env: Record<string, string | undefined>,
+  directory: string,
+): SecretsFileResult {
   const result: SecretsFileResult = { loaded: [], ignored: [], errors: [] };
 
   let entries: string[];
