@@ -41,9 +41,11 @@ test('redacts well-known credential formats', () => {
     fixture('ghp_', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'),
     fixture('github_pat_', '11ABCDEFG0123456789_abcdefghijklmnop'),
     fixture('AKIA', 'IOSFODNN7EXAMPLE'),
-    ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiIxMjM0NTY3ODkwIn0', 'dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U'].join(
-      '.',
-    ),
+    [
+      'eyJhbGciOiJIUzI1NiJ9',
+      'eyJzdWIiOiIxMjM0NTY3ODkwIn0',
+      'dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U',
+    ].join('.'),
     fixture('xoxb-', '123456789012-abcdefghijkl'),
   ];
 
