@@ -206,6 +206,7 @@ model User {
   assignedIncidents Incident[]              @relation("IncidentAssignedTo")
   incidentNotes     IncidentNote[]
   auditEvents       AuditEvent[]
+  authEvents        AuthEvent[]
   ownedControls     OrganizationControl[]   @relation("ControlOwner")
   updatedControls   OrganizationControl[]   @relation("ControlUpdatedBy")
   controlEvidence   ControlEvidence[]       @relation("EvidenceCreatedBy")
@@ -740,6 +741,28 @@ model AuditEvent {
   @@index([organizationId, action])
   @@index([organizationId, targetType, targetId])
   @@map("audit_events")
+}
+
+/// Authentication and second-factor activity. These rows are deliberately
+/// separate from `AuditEvent`: sign-in happens before any tenant is known, and
+/// the per-organization hash chain must not absorb pre-tenant activity. Rows
+/// are append-only in practice; a database trigger rejects update and delete.
+model AuthEvent {
+  id        String       @id @default(cuid())
+  /// Null when the attempt did not resolve to an account (for example, a
+  /// password sign-in for an address that does not exist).
+  userId    String?
+  action    String
+  outcome   AuditOutcome
+  ipAddress String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime     @default(now())
+  user      User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@map("auth_events")
 }
 
 /// Personal API key for the console API. The credential belongs to one user

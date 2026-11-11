@@ -22,12 +22,12 @@ This roadmap is a planning baseline, not a promise of delivery dates. Items are 
 - [x] Tenant ownership checks and negative authorization tests.
 - [ ] Secrets handling and safe configuration management. _Partial:_ secrets come from the environment, production refuses a weak auth secret, and repository secret scanning is in CI, but there is no secrets manager, rotation procedure, or startup validation for every variable.
 - [ ] Structured logs with sensitive-value redaction. _Not started:_ audit events are the security record; application logging is limited to request-correlated error messages.
-- [ ] Audit events for authentication, permission changes, and privileged operations. _Partial:_ membership changes, data mutations, and access denials are audited and hash-chained; sign-in, sign-out, and second-factor changes are not yet written to the audit trail.
+- [x] Audit events for authentication, permission changes, and privileged operations. Membership changes, data mutations, and access denials are hash-chained per organization; sign-in success and failure, second-factor verification, session ending, and two-factor disablement are recorded in the append-only `auth_events` table and shown to the account on `/account/security`.
 - [x] CI checks for formatting, tests, dependency vulnerabilities, and secret leaks.
 
 **Exit criteria:** sensitive routes have tested deny-by-default behavior; credentials are not committed to source; access boundaries are documented.
 
-Status: met for the implemented routes. Two items above remain partial and are tracked in Phase 2.
+Status: met for the implemented routes, except secrets handling (still partial) and structured application logs (not started).
 
 ## Phase 2 — Defensive MVP
 

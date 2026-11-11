@@ -71,6 +71,8 @@ The Phase 1 schema and its migrations are checked in:
 - `20261108130823_agent_monitoring` — `agents` and `agent_runs`, the `AGENT` finding source and audit actor.
 - `20261109090337_check_control_maps` — `check_control_maps`, joining an observed check id to a tenant control.
 - `20261109092103_agent_heartbeats_notifications` — agent cadence and outage marker columns, plus `notification_channels` and `notification_events`.
+- `20261111140000_finding_risk_sla` — derived `riskScore` and remediation `dueAt` on findings.
+- `20261111170000_auth_events` — `auth_events` for authentication activity, plus its append-only trigger. It is separate from `audit_events` because a sign-in happens before any organization is known.
 
 Apply them to the development database:
 
@@ -124,6 +126,9 @@ Test coverage in this phase:
 - `src/server/config.test.ts` — production transport rules: https origin, loopback exemption, and TLS for remote databases.
 - `tests/tenant-isolation.test.ts` — cross-tenant reads, writes, relationship abuse, disabled memberships, and MFA enforcement.
 - `tests/audit-integrity.test.ts` — every mutation appends a linked event, rows cannot be updated or deleted, chains stay valid per organization.
+- `src/server/auth/events.test.ts` — which authentication requests produce an activity event: sign-in only with a session, second-factor challenges and refusals, sign-up, OIDC callbacks, and the endpoints that are deliberately not recorded.
+- `tests/auth-events.test.ts` — failed sign-ins are attributed without storing the typed address, activity is scoped to one account, request metadata is bounded and redacted, and `auth_events` rejects `UPDATE` and `DELETE`.
+- `src/server/domain/risk.test.ts` — risk scoring blend and clamping, criticality multiplier, and severity-based remediation deadlines.
 - `tests/findings-workflow.test.ts` — the acceptance workflow and import deduplication.
 - `tests/rate-limit.test.ts` — window accounting and `429` behavior.
 - `tests/regression-defects.test.ts` — defects found by the runtime audit, kept as regressions: in-payload duplicate imports, concurrent import races, fingerprint stability across renames and asset deletion, session revocation scope on membership removal, active-only member counts, slug collisions, and case-insensitive member lookup.

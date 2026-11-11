@@ -124,6 +124,17 @@ async function main() {
   await register(owner, 'Audit Owner', `audit-owner-${stamp}@cybernorf.test`);
   await enableTotp(owner);
 
+  // The activity feed is written by Better Auth hooks, so only a real sign-up
+  // and second-factor verification prove the wiring end to end.
+  const activity = await owner.call('/account/security');
+  check(
+    'account activity lists the sign-in and second-factor events',
+    activity.status === 200 &&
+      activity.text.includes('Signed in') &&
+      activity.text.includes('Second factor verified'),
+    `status ${activity.status}`,
+  );
+
   const orgRes = await owner.call('/api/v1/organizations', {
     method: 'POST',
     body: { name: 'Runtime Audit', slug: `audit-${stamp}` },

@@ -1,8 +1,10 @@
 import { betterAuth, type ValidateUserInfoSource } from 'better-auth';
+import { createAuthMiddleware } from 'better-auth/api';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { genericOAuth, twoFactor } from 'better-auth/plugins';
 import { prisma } from '@/lib/prisma';
 import { boundDiscoveryFetch } from '@/server/auth/discovery-fetch';
+import { recordAuthActivity, recordSessionEnded } from '@/server/auth/events';
 import { OIDC_PROVIDER_ID, oidcEmailClaimRejection, readOidcSettings } from '@/server/auth/oidc';
 import { getAuthSecret, isProduction } from '@/server/config';
 
@@ -93,6 +95,26 @@ export const auth = betterAuth({
     },
   },
   trustedOrigins: process.env.BETTER_AUTH_URL ? [process.env.BETTER_AUTH_URL] : [],
+  // Authentication activity is recorded outside the tenant audit chain, because
+  // a sign-in happens before an organization is known. The hook is best-effort:
+  // a failure to write the record never fails the sign-in itself.
+  hooks: {
+    after: createAuthMiddleware(async (ctx) => {
+      await recordAuthActivity(ctx);
+    }),
+  },
+  databaseHooks: {
+    session: {
+      delete: {
+        after: async (session, ctx) => {
+          await recordSessionEnded({
+            userId: typeof session.userId === 'string' ? session.userId : null,
+            headers: ctx?.headers,
+          });
+        },
+      },
+    },
+  },
   rateLimit: {
     enabled: true,
     window: 60,
