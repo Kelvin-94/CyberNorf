@@ -12,6 +12,14 @@ import { createHash, randomBytes } from 'node:crypto';
  * Only the SHA-256 digest is stored. The plaintext value exists in the creation
  * response and nowhere else, which is why a lost key has to be replaced rather
  * than looked up.
+ *
+ * A fast digest is the right primitive here, deliberately: the credential is 32
+ * CSPRNG bytes (256 bits), never chosen by a person, never reused and never
+ * compared against a user-supplied password. There is nothing to brute-force
+ * offline, while a memory-hard KDF on every API request would add tens of
+ * milliseconds of CPU per call and turn a flooded endpoint into a self-inflicted
+ * denial of service. Password hashing rules apply to passwords, not to random
+ * bearer tokens.
  */
 
 export const API_KEY_PREFIX = 'cnk_';
