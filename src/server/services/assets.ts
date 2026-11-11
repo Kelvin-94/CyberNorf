@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
 import type { TenantContext } from '@/server/authz/context';
 import { conflict, notFound } from '@/server/errors';
+import { assertQuotaAvailable } from './quotas';
 import { findingFingerprint, isUniqueConstraintError, paginationMeta, riskFields } from './shared';
 
 export interface AssetListQuery {
@@ -119,6 +120,14 @@ export async function createAsset(
 ) {
   try {
     return await prisma.$transaction(async (tx) => {
+      // Checked inside the transaction so the count and the insert cannot be
+      // separated by another writer; see quotas.ts for the locking rationale.
+      await assertQuotaAvailable(tx, {
+        organizationId: ctx.organization.id,
+        tier: ctx.organization.tier,
+        resource: 'assets',
+      });
+
       const asset = await tx.asset.create({
         data: {
           organizationId: ctx.organization.id,

@@ -45,7 +45,16 @@ The app sends its own security headers (CSP, HSTS, `X-Frame-Options`, `X-Content
    | `POSTGRES_PASSWORD`  | Used when the volume is created.                                                                              |
    | `DATABASE_URL`       | Must repeat that password and keep `sslmode=verify-full&sslrootcert=/etc/cybernorf/database-tls/server.crt`.  |
 
-2. Build and start:
+2. Check the configuration before starting anything. This loads the same file the
+   stack will use, reports every problem at once, names variables but never
+   prints values, and exits non-zero if the app would refuse to boot or would
+   quietly disable a control:
+
+   ```sh
+   npm run config:check -- --env-file .env.production
+   ```
+
+3. Build and start:
 
    ```sh
    docker compose -f compose.prod.yaml --env-file .env.production up -d --build
@@ -53,7 +62,7 @@ The app sends its own security headers (CSP, HSTS, `X-Frame-Options`, `X-Content
 
    The order is database (healthy) → migrations (exit 0) → app (healthy) → proxy.
 
-3. Confirm the deployment:
+4. Confirm the deployment:
 
    ```sh
    docker compose -f compose.prod.yaml --env-file .env.production ps
@@ -65,11 +74,29 @@ The app sends its own security headers (CSP, HSTS, `X-Frame-Options`, `X-Content
    curl -sSI https://cybernorf.example.com/sign-in | grep -i strict-transport-security
    ```
 
-4. Create the first account at `/sign-up`, enrol a TOTP authenticator on `/account/security`, then create the organization. `OWNER` and `ADMIN` memberships are refused every mutation until a second factor exists.
+5. Create the first account at `/sign-up`, enrol a TOTP authenticator on `/account/security`, then create the organization. `OWNER` and `ADMIN` memberships are refused every mutation until a second factor exists.
 
 ## Operating it
 
-**Logs.** `docker compose -f compose.prod.yaml logs -f app proxy`. The proxy logs one JSON line per request and never records `Authorization` or `Cookie` headers.
+**Logs.** `docker compose -f compose.prod.yaml logs -f app proxy`. The proxy logs one JSON line per request and never records `Authorization` or `Cookie` headers. The app also logs one JSON line per event to stdout — `server.started` at boot and `request.unhandled_error` for unexpected failures — controlled by `LOG_LEVEL` (default `info`). It logs no request bodies or headers, and every record is redacted before it is written; see [LOGGING.md](LOGGING.md). Bound the Docker log file with the `json-file` driver's `max-size`/`max-file` options, because neither stream rotates itself.
+
+**Health probes.** Two endpoints serve different purposes and should not be confused:
+
+| Endpoint      | Answers   | Checks                                                                                | Use it for                                                                                             |
+| ------------- | --------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `/api/health` | liveness  | the process is running; never touches the database                                    | external uptime checks where a database blip must not trigger a restart                                |
+| `/api/ready`  | readiness | the database answers, and the applied migrations match the ones shipped in this image | the container `HEALTHCHECK` (as in `compose.prod.yaml`), load balancer membership, drain, deploy gates |
+
+`/api/ready` returns `503` with `checks.migrations` set to `pending` when the database is behind the image — the state that produces confusing runtime errors instead of a clean failure. `ahead` means the database carries migrations this image does not ship, which is what a rollback looks like; it is reported but does not fail readiness, because forward-only migrations are additive and refusing traffic would turn a rollback into an outage. Neither endpoint returns error text, migration names or connection details.
+
+**External monitoring.** Nothing in the stack pages a human. Point an external monitor at `/api/ready` and alert on a non-200 response or on the container disappearing entirely, because a probe served by a dead process cannot report its own death:
+
+```sh
+# every minute, alert after three consecutive failures
+curl -fsS https://cybernorf.example.com/api/ready >/dev/null || notify-on-call
+```
+
+Alert on the absence of a response as well as a failing one; use an outside-in service rather than a cron job on the same host, which fails silently when the host does.
 
 **Backups.** Two volumes matter: `cybernorf-prod_database-data` and `cybernorf-prod_caddy-data` (the latter holds the ACME account key and certificates, so losing it means re-issuing).
 
@@ -80,7 +107,21 @@ docker compose -f compose.prod.yaml exec -T database \
 
 Restore into a fresh volume with `pg_restore --clean --if-exists`. Take a dump before every upgrade; migrations are forward-only.
 
-**Application-level export.** `npm run data:export -- --org <slug> --out <file>` writes one tenant's records with a credential-free audit chain. Run it from a checkout that can reach the database, or through the API with a personal key.
+**Restore drill.** A dump that has never been restored is an assumption, not a control. The drill proves the archive restores and that the restored copy still enforces what the application depends on:
+
+```sh
+npm run db:restore-drill -- --docker-exec cybernorf-prod-database-1 --report "drill-$(date +%F).json"
+```
+
+Point `DATABASE_URL` at the database under test first. The script creates a throwaway `cybernorf_drill_*` database on the same server, dumps the source with `pg_dump`, restores it with `pg_restore --exit-on-error`, and then compares the two copies: table set, column definitions, constraints, triggers and migration history must match. It re-verifies every organization's audit chain with the application's own `verifyAuditChain`, and it attempts an `UPDATE` against `audit_events`, `auth_events` and `identity_events` to confirm the append-only triggers still reject writes after a restore. It exits non-zero on any failure, writes a JSON report suitable for retaining as evidence, and drops the throwaway database unless `--keep` is passed.
+
+`--docker-exec <container>` runs `pg_dump` and `pg_restore` inside the database container, which is what the compose stack ships; omit it when the host has PostgreSQL 17 client tools and the server is reachable directly.
+
+The drill creates and drops a database, so the connection needs `CREATEDB`. For the compose stack that is the `cybernorf` superuser already in `DATABASE_URL`.
+
+If the drill reports `hash_mismatch` or `link_mismatch`, stop: the audit chain in the archive does not match its own hashes, which means the source was modified out of band or the dump is damaged. Do not restore that archive over production without investigating first.
+
+**Application-level export.** `npm run data:export -- --org <slug> --out <file>` writes one tenant's records with a credential-free audit chain. Run it from a checkout that can reach the database; there is no export endpoint, so the script is the only path.
 
 **Scheduled alert sweep.** The platform ships no worker, so a timer calls the cron route:
 
@@ -130,12 +171,12 @@ Point `DATABASE_URL` at the provider's host with `sslmode=verify-full` and `sslr
 
 ## Troubleshooting
 
-| Symptom                                     | Cause and fix                                                                                                                                       |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `proxy` restarts, log shows ACME failures   | DNS does not resolve to this host, or port 80/443 is blocked. Caddy retries; fix reachability rather than disabling TLS.                            |
-| App logs `Failed to prepare server`         | `BETTER_AUTH_URL` is not `https://`, or `DATABASE_URL` has no TLS mode. The message names the variable.                                             |
-| `migrate` exits non-zero with `P1001`       | The database container is not healthy yet, or the password in `DATABASE_URL` differs from `POSTGRES_PASSWORD`.                                      |
-| `migrate` fails with a certificate error    | The `database-tls` volume is empty because the database never started, or `sslrootcert` does not point at `/etc/cybernorf/database-tls/server.crt`. |
-| `403 Cross-site requests are not allowed`   | `BETTER_AUTH_URL` differs from the origin in the address bar (scheme, host or port).                                                                |
-| `app` reports unhealthy but serves requests | Readiness also checks the database; look at the `database` container's health and `pg_stat_activity`.                                               |
-| Certificate issued for the wrong name       | `CYBERNORF_DOMAIN` and the DNS record disagree. Remove the `caddy-data` volume after fixing it, so Caddy re-issues.                                 |
+| Symptom                                     | Cause and fix                                                                                                                                                                                                   |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `proxy` restarts, log shows ACME failures   | DNS does not resolve to this host, or port 80/443 is blocked. Caddy retries; fix reachability rather than disabling TLS.                                                                                        |
+| App logs `Invalid configuration`            | Startup validation refused the environment. The report lists every failing variable and rule; run `npm run config:check -- --env-file .env.production` to iterate without restarting. Values are never printed. |
+| `migrate` exits non-zero with `P1001`       | The database container is not healthy yet, or the password in `DATABASE_URL` differs from `POSTGRES_PASSWORD`.                                                                                                  |
+| `migrate` fails with a certificate error    | The `database-tls` volume is empty because the database never started, or `sslrootcert` does not point at `/etc/cybernorf/database-tls/server.crt`.                                                             |
+| `403 Cross-site requests are not allowed`   | `BETTER_AUTH_URL` differs from the origin in the address bar (scheme, host or port).                                                                                                                            |
+| `app` reports unhealthy but serves requests | Readiness also checks the database; look at the `database` container's health and `pg_stat_activity`.                                                                                                           |
+| Certificate issued for the wrong name       | `CYBERNORF_DOMAIN` and the DNS record disagree. Remove the `caddy-data` volume after fixing it, so Caddy re-issues.                                                                                             |

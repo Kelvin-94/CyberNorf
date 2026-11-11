@@ -22,6 +22,7 @@ import {
 import { deriveAgentHealth, type AgentHealth } from '@/server/domain/notifications';
 import { badRequest, conflict, forbidden, notFound, unauthenticated } from '@/server/errors';
 import { attachMappedEvidence, loadMappedControls } from '@/server/services/check-maps';
+import { assertQuotaAvailable } from '@/server/services/quotas';
 import { agentFingerprint, isUniqueConstraintError, riskFields } from '@/server/services/shared';
 import { syncInventoryAndMatch } from '@/server/services/software';
 import type {
@@ -306,6 +307,12 @@ export async function registerAgent(
 
   try {
     const agent = await prisma.$transaction(async (tx) => {
+      await assertQuotaAvailable(tx, {
+        organizationId: ctx.organization.id,
+        tier: ctx.organization.tier,
+        resource: 'agents',
+      });
+
       const created = await tx.agent.create({
         data: {
           organizationId: ctx.organization.id,

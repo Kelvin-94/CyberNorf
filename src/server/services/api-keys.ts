@@ -10,6 +10,7 @@ import {
 import { conflict, forbidden, notFound } from '@/server/errors';
 import type { RequestMeta } from '@/server/http/request-meta';
 import type { ApiKeyCreateInput } from '@/server/validation/api-keys';
+import { assertQuotaAvailable } from './quotas';
 
 /**
  * Personal API key lifecycle.
@@ -146,6 +147,23 @@ export async function createUserApiKey(
   const issued = issueApiKey(input.expiresInDays, now);
 
   const row = await prisma.$transaction(async (tx) => {
+    const organization = await tx.organization.findUnique({
+      where: { id: input.organizationId },
+      select: { tier: true },
+    });
+
+    if (!organization) {
+      throw notFound('Organization not found.');
+    }
+
+    // The per-user cap above is a hard product limit; the tier quota is an
+    // org-wide limit, so both apply and the stricter one wins.
+    await assertQuotaAvailable(tx, {
+      organizationId: input.organizationId,
+      tier: organization.tier,
+      resource: 'apiKeys',
+    });
+
     const created = await tx.userApiKey.create({
       data: {
         name: input.name,

@@ -1,4 +1,6 @@
 import { prisma } from '@/lib/prisma';
+import type { TenantContext } from '@/server/authz/context';
+import { AuditActions, recordAuditEvent } from '@/server/audit/audit';
 
 /**
  * Whole-organization export for portability, archival, and a customer's
@@ -14,7 +16,7 @@ import { prisma } from '@/lib/prisma';
  * or auditor can verify it outside the platform.
  */
 
-export const EXPORT_VERSION = 1;
+export const EXPORT_VERSION = 2;
 
 export interface OrganizationExport {
   meta: {
@@ -43,14 +45,61 @@ export interface OrganizationExport {
   notificationChannels: unknown[];
   notificationEvents: unknown[];
   auditEvents: unknown[];
+  identities: unknown[];
+  /** Credential metadata only: hash and prefix never leave the database. */
+  identityCredentials: unknown[];
+  identityEvents: unknown[];
+  accessReviews: unknown[];
+  indicators: unknown[];
+  indicatorLinks: unknown[];
+  /** Tier overrides, if the tenant has any; `null` otherwise. */
+  quotas: unknown;
 }
 
 const EXCLUDED = [
   'agent token hashes, prefixes, and expiry',
+  'identity credential hashes and prefixes',
+  'personal API key hashes and prefixes',
   'sealed webhook signing secrets',
   'sessions, accounts, password hashes, and second-factor secrets',
   'rate-limit windows',
+  'evidence file contents (only their recorded hashes and metadata are included)',
 ];
+
+/**
+ * Interactive export: builds the payload and records who took it.
+ *
+ * The audit event is written after the read succeeds and is deliberately not
+ * part of the payload's own transaction: the export contains the audit trail up
+ * to that moment, so appending the "exported" row first would have the file claim
+ * an export that the file itself does not contain. Recording it afterwards keeps
+ * the discipline that an export is reproducible from the audit trail alone.
+ */
+export async function exportOrganizationForDownload(
+  ctx: TenantContext,
+): Promise<OrganizationExport> {
+  const payload = await exportOrganization(ctx.organization.id);
+
+  await recordAuditEvent({
+    organizationId: ctx.organization.id,
+    actorType: 'USER',
+    actorId: ctx.user.id,
+    action: AuditActions.EXPORT_DOWNLOADED,
+    outcome: 'SUCCESS',
+    targetType: 'organization',
+    targetId: ctx.organization.id,
+    summary: `Exported organization data as ${payload.meta.format} v${payload.meta.version}`,
+    metadata: {
+      version: payload.meta.version,
+      records: Object.values(payload.meta.counts).reduce((total, n) => total + n, 0),
+    },
+    ipAddress: ctx.meta.ipAddress,
+    userAgent: ctx.meta.userAgent,
+    requestId: ctx.meta.requestId,
+  });
+
+  return payload;
+}
 
 export async function exportOrganization(organizationId: string): Promise<OrganizationExport> {
   const organization = await prisma.organization.findUniqueOrThrow({
@@ -74,6 +123,13 @@ export async function exportOrganization(organizationId: string): Promise<Organi
     notificationChannels,
     notificationEvents,
     auditEvents,
+    identities,
+    identityCredentials,
+    identityEvents,
+    accessReviews,
+    indicators,
+    indicatorLinks,
+    quotas,
   ] = await Promise.all([
     prisma.membership.findMany({
       where: { organizationId },
@@ -168,6 +224,36 @@ export async function exportOrganization(organizationId: string): Promise<Organi
       where: { organizationId },
       orderBy: { sequence: 'asc' },
     }),
+    prisma.identity.findMany({ where: { organizationId }, orderBy: { createdAt: 'asc' } }),
+    prisma.identityCredential.findMany({
+      where: { organizationId },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        identityId: true,
+        name: true,
+        scopes: true,
+        expiresAt: true,
+        lastUsedAt: true,
+        revokedAt: true,
+        revokedReason: true,
+        createdById: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    }),
+    prisma.identityEvent.findMany({ where: { organizationId }, orderBy: { createdAt: 'asc' } }),
+    prisma.accessReview.findMany({
+      where: { organizationId },
+      orderBy: { createdAt: 'asc' },
+      include: { items: { orderBy: { createdAt: 'asc' } } },
+    }),
+    prisma.indicator.findMany({
+      where: { organizationId },
+      orderBy: { lastSeenAt: 'asc' },
+    }),
+    prisma.indicatorLink.findMany({ where: { organizationId }, orderBy: { createdAt: 'asc' } }),
+    prisma.organizationQuota.findUnique({ where: { organizationId } }),
   ]);
 
   const counts: Record<string, number> = {
@@ -186,6 +272,12 @@ export async function exportOrganization(organizationId: string): Promise<Organi
     notificationChannels: notificationChannels.length,
     notificationEvents: notificationEvents.length,
     auditEvents: auditEvents.length,
+    identities: identities.length,
+    identityCredentials: identityCredentials.length,
+    identityEvents: identityEvents.length,
+    accessReviews: accessReviews.length,
+    indicators: indicators.length,
+    indicatorLinks: indicatorLinks.length,
   };
 
   return {
@@ -215,5 +307,12 @@ export async function exportOrganization(organizationId: string): Promise<Organi
     notificationChannels,
     notificationEvents,
     auditEvents,
+    identities,
+    identityCredentials,
+    identityEvents,
+    accessReviews,
+    indicators,
+    indicatorLinks,
+    quotas,
   };
 }

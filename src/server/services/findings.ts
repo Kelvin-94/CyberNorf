@@ -9,6 +9,7 @@ import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
 import type { TenantContext } from '@/server/authz/context';
 import { canTransitionFinding } from '@/server/domain/transitions';
 import { conflict, notFound } from '@/server/errors';
+import { assertQuotaAvailable } from './quotas';
 import {
   assertActiveMember,
   assertAssetInOrganization,
@@ -217,6 +218,12 @@ export async function createFinding(
 
   try {
     return await prisma.$transaction(async (tx) => {
+      await assertQuotaAvailable(tx, {
+        organizationId: ctx.organization.id,
+        tier: ctx.organization.tier,
+        resource: 'findings',
+      });
+
       const finding = await tx.finding.create({
         data: {
           organizationId: ctx.organization.id,
@@ -611,6 +618,18 @@ async function applyImport(
 
     const toCreate = prepared.filter((entry) => !existingFingerprints.has(entry.fingerprint));
     const toRefresh = prepared.filter((entry) => existingFingerprints.has(entry.fingerprint));
+
+    // Charged once for the whole batch. Checking per row would be wrong twice
+    // over: it would take the quota lock N times, and a batch that overflows the
+    // limit by 100 would fail only after 100 rows were written.
+    if (toCreate.length > 0) {
+      await assertQuotaAvailable(tx, {
+        organizationId: ctx.organization.id,
+        tier: ctx.organization.tier,
+        resource: 'findings',
+        units: toCreate.length,
+      });
+    }
 
     let createdFindings: Array<{ id: string; title: string }> = [];
     if (toCreate.length > 0) {

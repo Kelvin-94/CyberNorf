@@ -10,6 +10,7 @@ import {
   MAX_ACTIVE_API_KEYS_PER_ORGANIZATION,
 } from '@/server/domain/api-keys';
 import { createUserApiKey, listUserApiKeys, revokeUserApiKey } from '@/server/services/api-keys';
+import { setQuotaOverride } from '@/server/services/quotas';
 import {
   assertTestDatabase,
   createTenant,
@@ -349,4 +350,51 @@ test('a key cannot mint another key', async () => {
     { statusCode: 403 },
   );
   assert.equal(await prisma.userApiKey.count({ where: { userId: tenant.ctx.user.id } }), 1);
+});
+
+test('an operator-imposed key ceiling stops creation and is audited', async () => {
+  const tenant = await createTenant({ role: 'OWNER', twoFactorEnabled: true });
+
+  await setQuotaOverride(tenant.organization.id, 'apiKeys', 1, { actorLabel: 'test:quota' });
+
+  await createUserApiKey(
+    tenant.ctx.user,
+    { name: 'first', organizationId: tenant.organization.id, expiresInDays: 30 },
+    testMeta(),
+  );
+
+  await expectAppError(
+    createUserApiKey(
+      tenant.ctx.user,
+      { name: 'second', organizationId: tenant.organization.id, expiresInDays: 30 },
+      testMeta(),
+    ),
+    { statusCode: 409, code: 'CONFLICT' },
+  );
+  assert.equal(
+    await prisma.userApiKey.count({ where: { organizationId: tenant.organization.id } }),
+    1,
+    'a rejected create must not leave a row behind',
+  );
+
+  // Clearing the override removes the tenant-wide ceiling; only the per-user
+  // constant still applies, so another key is allowed.
+  await setQuotaOverride(tenant.organization.id, 'apiKeys', null, { actorLabel: 'test:quota' });
+  await createUserApiKey(
+    tenant.ctx.user,
+    { name: 'third', organizationId: tenant.organization.id, expiresInDays: 30 },
+    testMeta(),
+  );
+
+  const events = await prisma.auditEvent.findMany({
+    where: { organizationId: tenant.organization.id, action: 'quota.override_changed' },
+    orderBy: { sequence: 'asc' },
+    select: { metadata: true },
+  });
+  assert.deepEqual(
+    events.map((event) => (event.metadata as { limit: number | null }).limit),
+    [1, null],
+    'the chain must record the applied limit and the cleared one',
+  );
+  assert.equal((await verifyAuditChain(tenant.organization.id)).valid, true);
 });

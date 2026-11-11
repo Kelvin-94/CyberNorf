@@ -22,6 +22,13 @@ const NAV_ITEMS: Array<{
   { href: '/advisories', label: 'Advisories', group: 'Investigate', capability: 'advisory.read' },
   { href: '/incidents', label: 'Incidents', group: 'Investigate', capability: 'incident.read' },
   { href: '/agents', label: 'Agents', group: 'Govern', capability: 'agent.read' },
+  { href: '/identities', label: 'Identities', group: 'Govern', capability: 'identity.read' },
+  {
+    href: '/access-reviews',
+    label: 'Access reviews',
+    group: 'Govern',
+    capability: 'access_review.read',
+  },
   { href: '/compliance', label: 'Compliance', group: 'Govern', capability: 'compliance.read' },
   { href: '/audit', label: 'Audit trail', group: 'Govern', capability: 'audit.read' },
   { href: '/members', label: 'Members', group: 'Govern', capability: 'organization.read' },

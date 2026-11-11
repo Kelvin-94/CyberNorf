@@ -38,6 +38,14 @@ export const CAPABILITIES = [
   'notification.manage',
   'advisory.read',
   'advisory.manage',
+  'identity.read',
+  'identity.manage',
+  'access_review.read',
+  'access_review.manage',
+  'indicator.read',
+  'indicator.manage',
+  'indicator.delete',
+  'export.download',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -62,6 +70,9 @@ export const MUTATING_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability
   'agent.manage',
   'notification.manage',
   'advisory.manage',
+  'identity.manage',
+  'access_review.manage',
+  'indicator.manage',
 ]);
 
 const READ_ONLY_CAPABILITIES: readonly Capability[] = [
@@ -74,6 +85,9 @@ const READ_ONLY_CAPABILITIES: readonly Capability[] = [
   'agent.read',
   'notification.read',
   'advisory.read',
+  'identity.read',
+  'access_review.read',
+  'indicator.read',
 ];
 
 const ANALYST_CAPABILITIES: readonly Capability[] = [
@@ -88,6 +102,9 @@ const ANALYST_CAPABILITIES: readonly Capability[] = [
   'incident.note',
   // Analysts may attach evidence but not attest controls or adopt frameworks.
   'compliance.evidence',
+  // Analysts record, update and link indicators; deleting one removes the
+  // provenance of every linked record, which is reserved for administrators.
+  'indicator.manage',
 ];
 
 const ADMIN_CAPABILITIES: readonly Capability[] = [
@@ -107,12 +124,26 @@ const ADMIN_CAPABILITIES: readonly Capability[] = [
   // An advisory feed decides which hosts are reported as vulnerable, so the
   // whole organization can read it but only administrators can replace it.
   'advisory.manage',
+  // The identity inventory is readable by every role, but lifecycle changes,
+  // credential issuance and access-review decisions are administrator actions.
+  'identity.read',
+  'identity.manage',
+  'access_review.read',
+  'access_review.manage',
+  // Deleting an indicator destroys the provenance of everything linked to it,
+  // so it is an administrator action even though analysts may record and link.
+  'indicator.delete',
 ];
 
+// Exporting is deliberately *not* a viewer capability even though every record it
+// contains is individually readable by a viewer. A whole-organization export is
+// one file with every member's email and the complete audit trail, which is the
+// shape of an insider data-theft event rather than of ordinary reading. Keeping it
+// at analyst and above preserves the invariant that a viewer can only read.
 export const ROLE_CAPABILITIES: Readonly<Record<OrgRole, ReadonlySet<Capability>>> = {
-  OWNER: new Set<Capability>([...ADMIN_CAPABILITIES]),
-  ADMIN: new Set<Capability>(ADMIN_CAPABILITIES),
-  ANALYST: new Set<Capability>(ANALYST_CAPABILITIES),
+  OWNER: new Set<Capability>([...ADMIN_CAPABILITIES, 'export.download']),
+  ADMIN: new Set<Capability>([...ADMIN_CAPABILITIES, 'export.download']),
+  ANALYST: new Set<Capability>([...ANALYST_CAPABILITIES, 'export.download']),
   VIEWER: new Set<Capability>(READ_ONLY_CAPABILITIES),
 };
 

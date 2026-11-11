@@ -1,5 +1,5 @@
 import { ZodError } from 'zod';
-import { redactError } from '@/server/security/redaction';
+import { logger } from '@/server/logging/logger';
 
 export type ErrorCode =
   | 'BAD_REQUEST'
@@ -103,8 +103,10 @@ export function toErrorResponse(error: unknown, requestId: string): Response {
     return toErrorResponse(validationFailed(error), requestId);
   }
 
-  // Unexpected failures are logged server-side without request payloads.
-  console.error(`[${requestId}] unhandled error:`, redactError(error));
+  // Unexpected failures are logged server-side without request payloads. The
+  // logger redacts the message and stack again, so a provider error that echoes
+  // a credential cannot reach the log even if it reached this catch.
+  logger.error('request.unhandled_error', { requestId, error });
 
   return toErrorResponse(internalError(), requestId);
 }
