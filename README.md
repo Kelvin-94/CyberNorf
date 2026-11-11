@@ -60,7 +60,7 @@ Do not execute untrusted files or active security tests on the application host.
 - **Assets:** register, edit, retire, and inspect organization-owned assets with type, identifier, criticality, and lifecycle status.
 - **Findings:** create findings manually or import them as JSON, deduplicate by fingerprint, move them through the documented lifecycle, assign them, and record remediation. Every finding is scored 0–100 from severity, CVSS, and asset criticality, gets a remediation deadline from its severity, and can be filtered to just the overdue work; the dashboard reports SLA compliance and mean time to resolve ([details](docs/FINDINGS.md)).
 - **Incidents:** create investigations, record notes, link findings, and move them through a forward-only lifecycle.
-- **Audit:** every security-relevant action is written to a per-organization hash chain that the UI and API can verify.
+- **Audit:** every security-relevant action is written to a per-organization hash chain that the UI and API can verify. Authentication activity — sign-in success and failure, second-factor verification, session ending, and two-factor disablement — is recorded in a separate append-only table, because a sign-in happens before any organization is known, and is shown to the account it belongs to on `/account/security`.
 
 ### Security properties currently enforced
 
@@ -68,7 +68,7 @@ Do not execute untrusted files or active security tests on the application host.
 - Organization scope resolved from membership, never from client input. Records from another organization resolve to `404`, not `403`.
 - TOTP second factor required for `OWNER` and `ADMIN` accounts before they can modify tenant data.
 - Same-origin check for state changes, per-IP and per-user rate limits shared through PostgreSQL, bounded JSON bodies, and uniform error responses without stack traces.
-- `UPDATE` and `DELETE` on audit rows rejected by a database trigger, with per-organization advisory locking so concurrent writers cannot fork the hash chain.
+- `UPDATE` and `DELETE` on audit rows rejected by a database trigger, with per-organization advisory locking so concurrent writers cannot fork the hash chain. Authentication activity rows are append-only by their own trigger, and never store the address a failed sign-in typed.
 
 ### Checks
 
