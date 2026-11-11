@@ -53,7 +53,10 @@ test('repeating a finding inside one import payload is skipped, not fatal', asyn
     result.skipped.map((entry) => entry.reason),
     ['duplicate_in_payload'],
   );
-  assert.equal(await prisma.finding.count({ where: { organizationId: tenant.organization.id } }), 1);
+  assert.equal(
+    await prisma.finding.count({ where: { organizationId: tenant.organization.id } }),
+    1,
+  );
 });
 
 test('concurrent imports of the same batch both succeed', async () => {
@@ -70,7 +73,10 @@ test('concurrent imports of the same batch both succeed', async () => {
 
   assert.equal(first.created + second.created, 2);
   assert.equal(first.updated + second.updated, 2);
-  assert.equal(await prisma.finding.count({ where: { organizationId: tenant.organization.id } }), 2);
+  assert.equal(
+    await prisma.finding.count({ where: { organizationId: tenant.organization.id } }),
+    2,
+  );
 });
 
 test('renaming a finding keeps re-imports deduplicated', async () => {
@@ -162,7 +168,10 @@ test('removing a member from one organization does not sign them out elsewhere',
 
   await removeMember(owner.ctx, membership.id);
 
-  const remaining = await prisma.session.findUnique({ where: { id: sessionId }, select: { id: true } });
+  const remaining = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { id: true },
+  });
   assert.ok(remaining, 'the user still belongs to another organization and must stay signed in');
 
   const memberships = await listUserOrganizations(shared.user.id);
@@ -194,7 +203,10 @@ test('removing the last membership revokes every session', async () => {
 
   await removeMember(owner.ctx, membership.id);
 
-  const remaining = await prisma.session.findUnique({ where: { id: sessionId }, select: { id: true } });
+  const remaining = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { id: true },
+  });
   assert.equal(remaining, null, 'a user with no remaining membership must be signed out');
 });
 
@@ -203,7 +215,12 @@ test('organization member counts ignore disabled memberships', async () => {
   const guest = await createUser();
 
   await prisma.membership.create({
-    data: { userId: guest.id, organizationId: owner.organization.id, role: 'VIEWER', status: 'DISABLED' },
+    data: {
+      userId: guest.id,
+      organizationId: owner.organization.id,
+      role: 'VIEWER',
+      status: 'DISABLED',
+    },
   });
 
   const summary = (await listUserOrganizations(owner.user.id)).find(

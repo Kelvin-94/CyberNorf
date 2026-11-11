@@ -170,7 +170,12 @@ test('a test delivery is signed over the timestamp and body', async () => {
   assert.equal(payload.type, 'TEST');
   assert.equal(payload.organizationId, tenant.organization.id);
   assert.equal(
-    verifyDelivery(secret, String(timestamp), delivery.body, String(signature).replace(/^sha256=/, '')),
+    verifyDelivery(
+      secret,
+      String(timestamp),
+      delivery.body,
+      String(signature).replace(/^sha256=/, ''),
+    ),
     true,
     'the receiver must be able to verify the delivery with the shared secret',
   );
@@ -271,7 +276,9 @@ test('the sweep alerts once per outage, delivers, then reports recovery', async 
     where: { organizationId: tenant.organization.id },
     _count: { _all: true },
   });
-  const pendingOffline = after.find((row) => row.type === 'AGENT_OFFLINE' && row.status === 'PENDING');
+  const pendingOffline = after.find(
+    (row) => row.type === 'AGENT_OFFLINE' && row.status === 'PENDING',
+  );
   assert.equal(
     pendingOffline?._count._all ?? 0,
     0,

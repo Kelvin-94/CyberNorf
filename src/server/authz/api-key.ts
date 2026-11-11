@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma';
 import { hashApiKey, isApiKeyShape } from '@/server/domain/api-keys';
 import { unauthenticated } from '@/server/errors';
+import { redactError } from '@/server/security/redaction';
 import type { AuthenticatedUser } from './context';
 
 /**
@@ -87,7 +88,7 @@ export async function resolveApiKeyUser(
       await prisma.userApiKey.update({ where: { id: row.id }, data: { lastUsedAt: now } });
     } catch (error) {
       // Usage metadata must never turn a valid request into a failure.
-      console.error('[api-key] failed to record last usage:', error);
+      console.error('[api-key] failed to record last usage:', redactError(error));
     }
   }
 

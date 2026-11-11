@@ -1,4 +1,5 @@
 import { ZodError } from 'zod';
+import { redactError } from '@/server/security/redaction';
 
 export type ErrorCode =
   | 'BAD_REQUEST'
@@ -103,10 +104,7 @@ export function toErrorResponse(error: unknown, requestId: string): Response {
   }
 
   // Unexpected failures are logged server-side without request payloads.
-  console.error(
-    `[${requestId}] unhandled error:`,
-    error instanceof Error ? error.message : 'unknown',
-  );
+  console.error(`[${requestId}] unhandled error:`, redactError(error));
 
   return toErrorResponse(internalError(), requestId);
 }

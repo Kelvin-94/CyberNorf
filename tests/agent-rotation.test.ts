@@ -12,7 +12,13 @@ import {
   revokeAgent,
   rotateAgentToken,
 } from '@/server/services/agents';
-import { assertTestDatabase, createTenant, expectAppError, prisma, resetDatabase } from './helpers/database.ts';
+import {
+  assertTestDatabase,
+  createTenant,
+  expectAppError,
+  prisma,
+  resetDatabase,
+} from './helpers/database.ts';
 
 before(async () => {
   assertTestDatabase();
@@ -25,7 +31,10 @@ after(() => {
 
 test('rotation replaces an active credential and the old token stops working', async () => {
   const tenant = await createTenant({ role: 'OWNER', twoFactorEnabled: true });
-  const registration = await registerAgent(tenant.ctx, { name: 'rotating-agent', source: 'BUILTIN' });
+  const registration = await registerAgent(tenant.ctx, {
+    name: 'rotating-agent',
+    source: 'BUILTIN',
+  });
   const original = registration.token ?? assert.fail('expected a builtin token');
 
   const rotated = await rotateAgentToken(tenant.ctx, registration.agent.id, 'scheduled rotation');
@@ -59,7 +68,10 @@ test('rotation replaces an active credential and the old token stops working', a
 
 test('only an owner can rotate, and only an active agent', async () => {
   const tenant = await createTenant({ role: 'OWNER', twoFactorEnabled: true });
-  const registration = await registerAgent(tenant.ctx, { name: 'guarded-agent', source: 'BUILTIN' });
+  const registration = await registerAgent(tenant.ctx, {
+    name: 'guarded-agent',
+    source: 'BUILTIN',
+  });
 
   const adminCtx = await createTenant({ role: 'ADMIN', twoFactorEnabled: true });
   // The owner check runs before the agent is loaded, so an administrator is
@@ -99,10 +111,7 @@ test('signature enforcement accepts a valid signature and rejects tampering', ()
   assert.throws(() => assertAgentRequestSignature(signed, credential, `${body} `), /signature/);
 
   // A signature is only valid for the credential that produced it.
-  assert.throws(
-    () => assertAgentRequestSignature(signed, `${credential}x`, body),
-    /signature/,
-  );
+  assert.throws(() => assertAgentRequestSignature(signed, `${credential}x`, body), /signature/);
 
   // Unsigned submissions pass only while enforcement is off.
   const unsigned = new Request('https://cybernorf.example/api/v1/agents/me/runs', {

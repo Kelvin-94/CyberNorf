@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { AuditActions, recordAuditEvent } from '@/server/audit/audit';
 import { forbidden, notFound, unauthenticated } from '@/server/errors';
 import { getRequestMeta, type RequestMeta } from '@/server/http/request-meta';
+import { redactError } from '@/server/security/redaction';
 import { resolveApiKeyUser } from './api-key';
 import { can, requiresSecondFactor, type Capability, type OrgRole } from './roles';
 
@@ -94,7 +95,7 @@ async function auditDeniedAccess(
     });
   } catch (error) {
     // A failing audit write must never turn a denial into an allow.
-    console.error(`[${meta.requestId}] failed to record denied access:`, error);
+    console.error(`[${meta.requestId}] failed to record denied access:`, redactError(error));
   }
 }
 

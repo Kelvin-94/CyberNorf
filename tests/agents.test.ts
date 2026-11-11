@@ -189,10 +189,7 @@ test('an external agent stays inert until the organization owner approves it', a
   assert.equal(audit?.actorType, 'USER');
   assert.equal(audit?.actorId, tenant.user.id);
 
-  await expectAppError(
-    authenticateAgentToken(`cna_${'a'.repeat(43)}`),
-    { statusCode: 401 },
-  );
+  await expectAppError(authenticateAgentToken(`cna_${'a'.repeat(43)}`), { statusCode: 401 });
 });
 
 test('failed checks raise one finding per check and target, and closed findings stay closed', async () => {
@@ -240,7 +237,9 @@ test('failed checks raise one finding per check and target, and closed findings 
   const second = await recordAgentRun(principal, monitoringReport());
   assert.equal(second.findingsCreated, 0);
   assert.equal(second.findingsRefreshed, 1);
-  const afterSecond = await prisma.finding.count({ where: { organizationId: tenant.organization.id } });
+  const afterSecond = await prisma.finding.count({
+    where: { organizationId: tenant.organization.id },
+  });
   assert.equal(afterSecond, 1, 'a repeated failure must not duplicate the finding');
 
   // A human closed the finding; later runs must not reopen that decision.
@@ -287,9 +286,15 @@ test('suspension stops the credential, resumption restores it and revocation is 
   });
   const token = registration.token ?? assert.fail('expected a builtin token');
 
-  await expectAppError(suspendAgent(admin, registration.agent.id, 'not owner'), { statusCode: 403 });
+  await expectAppError(suspendAgent(admin, registration.agent.id, 'not owner'), {
+    statusCode: 403,
+  });
 
-  const suspended = await suspendAgent(tenant.ctx, registration.agent.id, 'Rotating the host image.');
+  const suspended = await suspendAgent(
+    tenant.ctx,
+    registration.agent.id,
+    'Rotating the host image.',
+  );
   assert.equal(suspended.status, 'SUSPENDED');
   await expectAppError(authenticateAgentToken(token), { statusCode: 401 });
 
@@ -332,10 +337,9 @@ test('agents are scoped to their organization and names stay unique per tenant',
   assert.equal(ownList.agents.length, 1);
   assert.equal(ownList.counts.ACTIVE, 1);
 
-  await expectAppError(
-    registerAgent(first.ctx, { name: 'edge-node-monitor', source: 'OPENAI' }),
-    { statusCode: 409 },
-  );
+  await expectAppError(registerAgent(first.ctx, { name: 'edge-node-monitor', source: 'OPENAI' }), {
+    statusCode: 409,
+  });
   // The same name is fine in a different organization.
   const elsewhere = await registerAgent(second.ctx, {
     name: 'edge-node-monitor',
@@ -364,13 +368,7 @@ test('every agent action extends the hash-chained audit trail', async () => {
   });
   assert.deepEqual(
     actions.map((row) => row.action),
-    [
-      'agent.registered',
-      'agent.approved',
-      'agent.suspended',
-      'agent.resumed',
-      'agent.revoked',
-    ],
+    ['agent.registered', 'agent.approved', 'agent.suspended', 'agent.resumed', 'agent.revoked'],
   );
 
   const chain = await verifyAuditChain(tenant.organization.id);
@@ -429,12 +427,6 @@ test('a failing check titles the finding with the reported faulty state', async 
   });
   assert.equal(creationEvent.action, 'finding.created');
   assert.equal(creationEvent.actorType, 'AGENT');
-  assert.equal(
-    (creationEvent.metadata as { agentId?: string }).agentId,
-    registration.agent.id,
-  );
-  assert.equal(
-    (creationEvent.metadata as { runId?: string }).runId,
-    result.run.id,
-  );
+  assert.equal((creationEvent.metadata as { agentId?: string }).agentId, registration.agent.id);
+  assert.equal((creationEvent.metadata as { runId?: string }).runId, result.run.id);
 });

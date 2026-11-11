@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Prisma, type AuditActorType, type AuditOutcome } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
+import { redactString, redactValue } from '@/server/security/redaction';
 import { canonicalize } from './canonical';
 
 export const AuditActions = {
@@ -131,6 +132,8 @@ export async function appendAuditEvent(tx: AuditTx, input: AuditEventInput): Pro
   });
 
   const createdAt = new Date();
+  // Redact before hashing: the chain must cover what is actually stored, and a
+  // caller must not be able to persist a credential through audit metadata.
   const event = {
     sequence: (previous?.sequence ?? 0) + 1,
     organizationId: input.organizationId,
@@ -140,8 +143,11 @@ export async function appendAuditEvent(tx: AuditTx, input: AuditEventInput): Pro
     outcome: input.outcome,
     targetType: input.targetType ?? null,
     targetId: input.targetId ?? null,
-    summary: input.summary ?? null,
-    metadata: input.metadata ?? null,
+    summary: input.summary == null ? null : redactString(input.summary),
+    metadata:
+      input.metadata === null || input.metadata === undefined
+        ? null
+        : (redactValue(input.metadata) as Prisma.InputJsonValue),
     createdAt,
   };
 

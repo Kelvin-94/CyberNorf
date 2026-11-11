@@ -8,7 +8,13 @@ import {
   importFindings,
   listFindings,
 } from '@/server/services/findings';
-import { assertTestDatabase, createTenant, expectAppError, prisma, resetDatabase } from './helpers/database.ts';
+import {
+  assertTestDatabase,
+  createTenant,
+  expectAppError,
+  prisma,
+  resetDatabase,
+} from './helpers/database.ts';
 
 before(async () => {
   assertTestDatabase();
@@ -65,7 +71,12 @@ test('an analyst registers an asset, records a finding, investigates it, and clo
   assert.equal(resolved.total, 1);
 
   const history = detail.history.map((event) => event.action);
-  assert.deepEqual(history, ['finding.created', 'finding.status_changed', 'finding.status_changed', 'finding.status_changed']);
+  assert.deepEqual(history, [
+    'finding.created',
+    'finding.status_changed',
+    'finding.status_changed',
+    'finding.status_changed',
+  ]);
   const resolvedEvent = detail.history.at(-1);
   assert.equal(resolvedEvent?.actor?.name, tenant.user.name);
 });
@@ -79,7 +90,12 @@ test('invalid lifecycle moves are rejected with a conflict', async () => {
     assetId: asset.id,
   });
 
-  await changeFindingStatus(tenant.ctx, finding.id, 'FALSE_POSITIVE', 'Reported by an unauthenticated scanner');
+  await changeFindingStatus(
+    tenant.ctx,
+    finding.id,
+    'FALSE_POSITIVE',
+    'Reported by an unauthenticated scanner',
+  );
   await expectAppError(changeFindingStatus(tenant.ctx, finding.id, 'IN_PROGRESS'), {
     statusCode: 409,
     code: 'CONFLICT',
@@ -97,7 +113,11 @@ test('a manual finding cannot be duplicated inside one organization', async () =
   });
 
   await expectAppError(
-    createFinding(tenant.ctx, { title: 'weak tls configuration', severity: 'MEDIUM', assetId: asset.id }),
+    createFinding(tenant.ctx, {
+      title: 'weak tls configuration',
+      severity: 'MEDIUM',
+      assetId: asset.id,
+    }),
     { statusCode: 409, code: 'CONFLICT' },
   );
 });
@@ -107,8 +127,16 @@ test('imports deduplicate by fingerprint and report unresolved assets per item',
   const asset = await seedAsset(tenant, 'import.example');
 
   const first = await importFindings(tenant.ctx, [
-    { title: 'Reflected cross-site scripting in search', severity: 'HIGH', assetIdentifier: asset.identifier },
-    { title: 'Publicly readable storage bucket', severity: 'MEDIUM', assetIdentifier: 'unknown.example' },
+    {
+      title: 'Reflected cross-site scripting in search',
+      severity: 'HIGH',
+      assetIdentifier: asset.identifier,
+    },
+    {
+      title: 'Publicly readable storage bucket',
+      severity: 'MEDIUM',
+      assetIdentifier: 'unknown.example',
+    },
   ]);
   assert.equal(first.created, 1);
   assert.equal(first.updated, 0);
@@ -116,13 +144,19 @@ test('imports deduplicate by fingerprint and report unresolved assets per item',
   assert.equal(first.skipped[0]?.reason, 'asset_identifier_not_found');
 
   const second = await importFindings(tenant.ctx, [
-    { title: 'Reflected cross-site scripting in search', severity: 'HIGH', assetIdentifier: asset.identifier },
+    {
+      title: 'Reflected cross-site scripting in search',
+      severity: 'HIGH',
+      assetIdentifier: asset.identifier,
+    },
   ]);
   assert.equal(second.created, 0);
   assert.equal(second.updated, 1);
 
   assert.equal(
-    await prisma.finding.count({ where: { organizationId: tenant.organization.id, source: 'IMPORT' } }),
+    await prisma.finding.count({
+      where: { organizationId: tenant.organization.id, source: 'IMPORT' },
+    }),
     1,
   );
 
@@ -149,5 +183,8 @@ test('imports cannot reference assets from another organization', async () => {
   ]);
   assert.equal(result.created, 0);
   assert.equal(result.skipped[0]?.reason, 'asset_not_found');
-  assert.equal(await prisma.finding.count({ where: { organizationId: tenant.organization.id } }), 0);
+  assert.equal(
+    await prisma.finding.count({ where: { organizationId: tenant.organization.id } }),
+    0,
+  );
 });
