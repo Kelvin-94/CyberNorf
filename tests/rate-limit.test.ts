@@ -56,7 +56,10 @@ test('separate keys have independent budgets', async () => {
   const secondKey = uniqueKey();
 
   await enforceRateLimit(firstKey, 1, 60);
-  await expectAppError(enforceRateLimit(firstKey, 1, 60), { statusCode: 429, code: 'RATE_LIMITED' });
+  await expectAppError(enforceRateLimit(firstKey, 1, 60), {
+    statusCode: 429,
+    code: 'RATE_LIMITED',
+  });
   await enforceRateLimit(secondKey, 1, 60);
 });
 

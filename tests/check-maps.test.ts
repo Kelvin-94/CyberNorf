@@ -101,7 +101,10 @@ test('a mapped check files its finding as control evidence exactly once', async 
   const second = await recordAgentRun(principal, report([FIREWALL_CHECK, PASSING_CHECK]));
   assert.equal(second.findingsRefreshed, 1);
   assert.equal(second.controlEvidenceAttached, 0);
-  assert.equal(await prisma.controlEvidence.count({ where: { organizationControlId: control.id } }), 1);
+  assert.equal(
+    await prisma.controlEvidence.count({ where: { organizationControlId: control.id } }),
+    1,
+  );
 
   const audit = await prisma.auditEvent.findFirstOrThrow({
     where: { organizationId: tenant.organization.id, action: 'compliance.evidence_added' },
@@ -151,7 +154,11 @@ test('the mapping overview lists observed checks, their status and their control
   assert.equal(firewall?.title, FIREWALL_CHECK.title);
   assert.equal(firewall?.mappings.length, 1);
   assert.equal(firewall?.mappings[0]?.mapId, map.mapId);
-  assert.equal(firewall?.mappings[0]?.evidenceCount, 1, 'the control now carries the filed evidence');
+  assert.equal(
+    firewall?.mappings[0]?.evidenceCount,
+    1,
+    'the control now carries the filed evidence',
+  );
 
   // A mapping without a recent run stays visible, so it can still be removed.
   const unmappedCheck = await listCheckMaps(tenant.ctx, null);
@@ -191,7 +198,10 @@ test('mappings are unique per check and cannot cross tenants', async () => {
 
   const removed = await deleteCheckMap(tenant.ctx, stored.id);
   assert.equal(removed.id, stored.id);
-  assert.equal(await prisma.checkControlMap.count({ where: { organizationId: tenant.organization.id } }), 0);
+  assert.equal(
+    await prisma.checkControlMap.count({ where: { organizationId: tenant.organization.id } }),
+    0,
+  );
 });
 
 test('a mapping added after the finding exists still receives evidence', async () => {

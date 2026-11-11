@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import {
-  getOidcSignInLabel,
-  oidcEmailClaimRejection,
-  readOidcSettings,
-} from '@/server/auth/oidc';
+import { getOidcSignInLabel, oidcEmailClaimRejection, readOidcSettings } from '@/server/auth/oidc';
 
 /**
  * Single sign-on configuration decides whether a second way into every account
@@ -43,12 +39,20 @@ test('cleartext issuers are refused unless the provider is on loopback', () => {
   );
   const loopback = readOidcSettings({ ...configured, OIDC_ISSUER: 'http://127.0.0.1:9100' });
   assert.equal(loopback?.discoveryUrl, 'http://127.0.0.1:9100/.well-known/openid-configuration');
-  assert.doesNotThrow(() => readOidcSettings({ ...configured, OIDC_ISSUER: 'http://localhost:9100' }));
+  assert.doesNotThrow(() =>
+    readOidcSettings({ ...configured, OIDC_ISSUER: 'http://localhost:9100' }),
+  );
 });
 
 test('issuers that are not an absolute http(s) URL are refused', () => {
-  assert.throws(() => readOidcSettings({ ...configured, OIDC_ISSUER: 'idp.example.com' }), /absolute/);
-  assert.throws(() => readOidcSettings({ ...configured, OIDC_ISSUER: 'ftp://idp.example.com' }), /http/);
+  assert.throws(
+    () => readOidcSettings({ ...configured, OIDC_ISSUER: 'idp.example.com' }),
+    /absolute/,
+  );
+  assert.throws(
+    () => readOidcSettings({ ...configured, OIDC_ISSUER: 'ftp://idp.example.com' }),
+    /http/,
+  );
 });
 
 test('issuers with embedded credentials or query strings are refused', () => {
@@ -77,7 +81,10 @@ test('a configured provider normalizes the issuer and derives discovery', () => 
 });
 
 test('the display name is collapsed and bounded', () => {
-  assert.equal(getOidcSignInLabel({ ...configured, OIDC_DISPLAY_NAME: '  Acme   SSO  ' }), 'Acme SSO');
+  assert.equal(
+    getOidcSignInLabel({ ...configured, OIDC_DISPLAY_NAME: '  Acme   SSO  ' }),
+    'Acme SSO',
+  );
   const long = getOidcSignInLabel({ ...configured, OIDC_DISPLAY_NAME: 'x'.repeat(200) });
   assert.equal(long?.length, 40);
 });

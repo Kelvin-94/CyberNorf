@@ -64,7 +64,7 @@ Do not execute untrusted files or active security tests on the application host.
 
 ### Security properties currently enforced
 
-- Server-side deny-by-default capability checks on every tenant API route and every server-rendered tenant page; navigation only *reflects* those capabilities.
+- Server-side deny-by-default capability checks on every tenant API route and every server-rendered tenant page; navigation only _reflects_ those capabilities.
 - Organization scope resolved from membership, never from client input. Records from another organization resolve to `404`, not `403`.
 - TOTP second factor required for `OWNER` and `ADMIN` accounts before they can modify tenant data.
 - Same-origin check for state changes, per-IP and per-user rate limits shared through PostgreSQL, bounded JSON bodies, and uniform error responses without stack traces.

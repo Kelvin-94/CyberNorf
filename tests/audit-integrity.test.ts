@@ -63,7 +63,11 @@ test('every mutation appends a linked, verifiable audit event', async () => {
 
   for (const [index, event] of events.entries()) {
     if (index > 0) {
-      assert.equal(event.prevHash, events[index - 1]?.hash, `sequence ${event.sequence} must link to its predecessor`);
+      assert.equal(
+        event.prevHash,
+        events[index - 1]?.hash,
+        `sequence ${event.sequence} must link to its predecessor`,
+      );
     }
     assert.equal(event.outcome, 'SUCCESS');
     assert.equal(event.actorId, tenant.user.id);
@@ -115,7 +119,10 @@ test('audit rows cannot be deleted through the application database role', async
     prisma.$executeRaw`DELETE FROM "audit_events" WHERE "organizationId" = ${tenant.organization.id}`,
   );
   assert.match(message, /append-only/);
-  assert.equal(await prisma.auditEvent.count({ where: { organizationId: tenant.organization.id } }), 1);
+  assert.equal(
+    await prisma.auditEvent.count({ where: { organizationId: tenant.organization.id } }),
+    1,
+  );
 });
 
 test('chains are independent per organization and stay valid after rejected tampering', async () => {

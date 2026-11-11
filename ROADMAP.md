@@ -14,17 +14,15 @@ This roadmap is a planning baseline, not a promise of delivery dates. Items are 
 
 **Exit criteria:** a narrow MVP scope, identified trust boundaries, and an agreed implementation plan.
 
-
-
 ## Phase 1 — Secure application foundation
 
 - [x] Authentication, MFA for privileged users, and secure session handling.
 - [x] Organization membership and role/capability model.
 - [x] Central policy enforcement on server-side operations.
 - [x] Tenant ownership checks and negative authorization tests.
-- [ ] Secrets handling and safe configuration management. *Partial:* secrets come from the environment, production refuses a weak auth secret, and repository secret scanning is in CI, but there is no secrets manager, rotation procedure, or startup validation for every variable.
-- [ ] Structured logs with sensitive-value redaction. *Not started:* audit events are the security record; application logging is limited to request-correlated error messages.
-- [ ] Audit events for authentication, permission changes, and privileged operations. *Partial:* membership changes, data mutations, and access denials are audited and hash-chained; sign-in, sign-out, and second-factor changes are not yet written to the audit trail.
+- [ ] Secrets handling and safe configuration management. _Partial:_ secrets come from the environment, production refuses a weak auth secret, and repository secret scanning is in CI, but there is no secrets manager, rotation procedure, or startup validation for every variable.
+- [ ] Structured logs with sensitive-value redaction. _Not started:_ audit events are the security record; application logging is limited to request-correlated error messages.
+- [ ] Audit events for authentication, permission changes, and privileged operations. _Partial:_ membership changes, data mutations, and access denials are audited and hash-chained; sign-in, sign-out, and second-factor changes are not yet written to the audit trail.
 - [x] CI checks for formatting, tests, dependency vulnerabilities, and secret leaks.
 
 **Exit criteria:** sensitive routes have tested deny-by-default behavior; credentials are not committed to source; access boundaries are documented.
@@ -87,6 +85,7 @@ Do not begin this phase until the prior security foundation is implemented and r
 ## Release discipline
 
 For each release:
+
 1. Define scope and known limitations.
 2. Review security-sensitive changes.
 3. Run automated tests and relevant manual checks.

@@ -171,7 +171,11 @@ test('retention plan counts expiring rows without deleting anything', async () =
 
   const plan = await planRetention(organizationId, { days: RETENTION_DAYS, now: NOW });
   assert.deepEqual(
-    { runs: plan.runs, notificationEvents: plan.notificationEvents, softwareItems: plan.softwareItems },
+    {
+      runs: plan.runs,
+      notificationEvents: plan.notificationEvents,
+      softwareItems: plan.softwareItems,
+    },
     { runs: 1, notificationEvents: 1, softwareItems: 1 },
   );
   assert.equal(
@@ -180,7 +184,11 @@ test('retention plan counts expiring rows without deleting anything', async () =
     'a dry run must not delete runs',
   );
 
-  const purged = await purgeRetention(organizationId, { days: RETENTION_DAYS, now: NOW }, testMeta());
+  const purged = await purgeRetention(
+    organizationId,
+    { days: RETENTION_DAYS, now: NOW },
+    testMeta(),
+  );
   assert.deepEqual(purged, plan);
 
   const runs = await prisma.agentRun.findMany({ where: { organizationId }, select: { id: true } });
@@ -311,13 +319,19 @@ test('the export carries business records and no credentials', async () => {
   );
 
   const serialized = JSON.stringify(payload);
-  assert.ok(!serialized.includes(foreignFinding.id), 'another tenant must not leak into the export');
+  assert.ok(
+    !serialized.includes(foreignFinding.id),
+    'another tenant must not leak into the export',
+  );
   // Field names, not words: the meta block explains what is excluded in prose.
-  for (const forbidden of ['tokenHash', 'tokenPrefix', 'secretSealed', 'passwordHash', 'twoFactorSecret']) {
-    assert.ok(
-      !serialized.includes(forbidden),
-      `the export must not contain ${forbidden}`,
-    );
+  for (const forbidden of [
+    'tokenHash',
+    'tokenPrefix',
+    'secretSealed',
+    'passwordHash',
+    'twoFactorSecret',
+  ]) {
+    assert.ok(!serialized.includes(forbidden), `the export must not contain ${forbidden}`);
   }
 
   const agent = payload.agents[0] as { id: string; scopes: string[] };

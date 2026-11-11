@@ -8,12 +8,7 @@ import {
   matchPackages,
 } from '@/server/services/software';
 import { advisoryImportSchema } from '@/server/validation/software';
-import {
-  assertTestDatabase,
-  createTenant,
-  prisma,
-  resetDatabase,
-} from './helpers/database.ts';
+import { assertTestDatabase, createTenant, prisma, resetDatabase } from './helpers/database.ts';
 
 before(async () => {
   assertTestDatabase();
@@ -32,7 +27,10 @@ const CROSS_SPAWN_ADVISORY = {
   referenceUrl: 'https://nvd.nist.gov/vuln/detail/CVE-2024-21538',
 };
 
-function inventoryReport(version: string, extra: Array<{ ecosystem: 'NPM' | 'BREW'; name: string; version: string }> = []) {
+function inventoryReport(
+  version: string,
+  extra: Array<{ ecosystem: 'NPM' | 'BREW'; name: string; version: string }> = [],
+) {
   return {
     hostname: 'kelvins-imac',
     platform: 'darwin 25.6.0',
@@ -109,7 +107,10 @@ test('an affected package raises one finding per advisory and host, then refresh
   const tenant = await createTenant({ role: 'OWNER', twoFactorEnabled: true });
   await importAdvisories(tenant.ctx, { advisories: [CROSS_SPAWN_ADVISORY] });
 
-  const registration = await registerAgent(tenant.ctx, { name: 'inventory-agent', source: 'BUILTIN' });
+  const registration = await registerAgent(tenant.ctx, {
+    name: 'inventory-agent',
+    source: 'BUILTIN',
+  });
   const principal = await authenticateAgentToken(
     registration.token ?? assert.fail('expected a builtin token'),
   );
@@ -192,7 +193,10 @@ test('an affected package raises one finding per advisory and host, then refresh
 
 test('packages that disappear from a report leave the snapshot', async () => {
   const tenant = await createTenant({ role: 'OWNER', twoFactorEnabled: true });
-  const registration = await registerAgent(tenant.ctx, { name: 'pruning-agent', source: 'BUILTIN' });
+  const registration = await registerAgent(tenant.ctx, {
+    name: 'pruning-agent',
+    source: 'BUILTIN',
+  });
   const principal = await authenticateAgentToken(
     registration.token ?? assert.fail('expected a builtin token'),
   );
@@ -201,10 +205,7 @@ test('packages that disappear from a report leave the snapshot', async () => {
     principal,
     inventoryReport('7.0.4', [{ ecosystem: 'BREW', name: 'openssl@3', version: '3.5.0' }]),
   );
-  assert.equal(
-    await prisma.softwareItem.count({ where: { agentId: registration.agent.id } }),
-    2,
-  );
+  assert.equal(await prisma.softwareItem.count({ where: { agentId: registration.agent.id } }), 2);
 
   await recordAgentRun(principal, inventoryReport('7.0.4'));
   const remaining = await prisma.softwareItem.findMany({
@@ -231,18 +232,21 @@ test('matching is per ecosystem and tolerant of package-name casing only', () =>
     referenceUrl: null,
   };
 
-  const wrongEcosystem = matchPackages([advisory], [
-    { ecosystem: 'BREW', name: 'cross-spawn', version: '7.0.4' },
-  ]);
+  const wrongEcosystem = matchPackages(
+    [advisory],
+    [{ ecosystem: 'BREW', name: 'cross-spawn', version: '7.0.4' }],
+  );
   assert.equal(wrongEcosystem.length, 0, 'a package from another ecosystem must not match');
 
-  const cased = matchPackages([advisory], [
-    { ecosystem: 'NPM', name: 'Cross-Spawn', version: '7.0.4' },
-  ]);
+  const cased = matchPackages(
+    [advisory],
+    [{ ecosystem: 'NPM', name: 'Cross-Spawn', version: '7.0.4' }],
+  );
   assert.equal(cased.length, 1);
 
-  const fixed = matchPackages([advisory], [
-    { ecosystem: 'NPM', name: 'cross-spawn', version: '7.0.5' },
-  ]);
+  const fixed = matchPackages(
+    [advisory],
+    [{ ecosystem: 'NPM', name: 'cross-spawn', version: '7.0.5' }],
+  );
   assert.equal(fixed.length, 0, 'a fixed version must not match');
 });

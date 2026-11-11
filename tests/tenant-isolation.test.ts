@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { before, test } from 'node:test';
 import { requireTenantContext } from '@/server/authz/context';
 import { createAsset, getAssetDetail, updateAsset } from '@/server/services/assets';
-import { changeFindingStatus, createFinding, getFindingDetail, listFindings } from '@/server/services/findings';
+import {
+  changeFindingStatus,
+  createFinding,
+  getFindingDetail,
+  listFindings,
+} from '@/server/services/findings';
 import {
   assertTestDatabase,
   createTenant,
@@ -36,10 +41,20 @@ test('records from another organization are invisible, not merely read-only', as
     assetId: assetB.id,
   });
 
-  await expectAppError(getFindingDetail(tenantA.ctx, findingB.id), { statusCode: 404, code: 'NOT_FOUND' });
-  await expectAppError(getAssetDetail(tenantA.ctx, assetB.id), { statusCode: 404, code: 'NOT_FOUND' });
-  await expectAppError(changeFindingStatus(tenantA.ctx, findingB.id, 'RESOLVED'), { statusCode: 404 });
-  await expectAppError(updateAsset(tenantA.ctx, assetB.id, { name: 'Hijacked' }), { statusCode: 404 });
+  await expectAppError(getFindingDetail(tenantA.ctx, findingB.id), {
+    statusCode: 404,
+    code: 'NOT_FOUND',
+  });
+  await expectAppError(getAssetDetail(tenantA.ctx, assetB.id), {
+    statusCode: 404,
+    code: 'NOT_FOUND',
+  });
+  await expectAppError(changeFindingStatus(tenantA.ctx, findingB.id, 'RESOLVED'), {
+    statusCode: 404,
+  });
+  await expectAppError(updateAsset(tenantA.ctx, assetB.id, { name: 'Hijacked' }), {
+    statusCode: 404,
+  });
 
   const listA = await listFindings(tenantA.organization.id, {
     page: 1,
@@ -60,7 +75,13 @@ test('a non-member cannot resolve another tenant, even with a valid session', as
   const target = await createTenant({ role: 'OWNER', twoFactorEnabled: true });
 
   await expectAppError(
-    requireTenantContext(testHeaders(), target.organization.slug, 'finding.read', testMeta(), outsider.user),
+    requireTenantContext(
+      testHeaders(),
+      target.organization.slug,
+      'finding.read',
+      testMeta(),
+      outsider.user,
+    ),
     { statusCode: 404, code: 'NOT_FOUND' },
   );
 });
@@ -78,7 +99,13 @@ test('a viewer is denied mutating capabilities and the denial is audited', async
   assert.equal(ctx.membership.role, 'VIEWER');
 
   await expectAppError(
-    requireTenantContext(testHeaders(), viewer.organization.slug, 'finding.create', testMeta(), viewer.user),
+    requireTenantContext(
+      testHeaders(),
+      viewer.organization.slug,
+      'finding.create',
+      testMeta(),
+      viewer.user,
+    ),
     { statusCode: 403, code: 'FORBIDDEN' },
   );
 
@@ -97,7 +124,13 @@ test('privileged mutations require a second factor', async () => {
   const ownerWithoutMfa = await createTenant({ role: 'OWNER', twoFactorEnabled: false });
 
   await expectAppError(
-    requireTenantContext(testHeaders(), ownerWithoutMfa.organization.slug, 'asset.create', testMeta(), ownerWithoutMfa.user),
+    requireTenantContext(
+      testHeaders(),
+      ownerWithoutMfa.organization.slug,
+      'asset.create',
+      testMeta(),
+      ownerWithoutMfa.user,
+    ),
     { statusCode: 403, code: 'MFA_REQUIRED' },
   );
 
@@ -127,7 +160,13 @@ test('a disabled membership loses access to the organization', async () => {
   });
 
   await expectAppError(
-    requireTenantContext(testHeaders(), tenant.organization.slug, 'finding.read', testMeta(), tenant.user),
+    requireTenantContext(
+      testHeaders(),
+      tenant.organization.slug,
+      'finding.read',
+      testMeta(),
+      tenant.user,
+    ),
     { statusCode: 404, code: 'NOT_FOUND' },
   );
 });
