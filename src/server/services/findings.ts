@@ -373,7 +373,15 @@ export async function updateFinding(
         targetType: 'finding',
         targetId: finding.id,
         summary: `Finding "${finding.title}" updated`,
-        metadata: { changedFields: Object.keys(input), before: existing },
+        metadata: {
+          changedFields: Object.keys(input),
+          // The snapshot is written to audit metadata, so it has to be plain
+          // JSON: Prisma's Decimal is a class instance and cannot be stored.
+          before: {
+            ...existing,
+            cvssScore: existing.cvssScore === null ? null : Number(existing.cvssScore),
+          },
+        },
         ipAddress: ctx.meta.ipAddress,
         userAgent: ctx.meta.userAgent,
         requestId: ctx.meta.requestId,
