@@ -51,7 +51,7 @@ export default async function AgentDetailPage({
   // The routes admit OWNER and ADMIN, but approval, suspension and revocation
   // are owner-only in the service, so the UI never offers an action that will
   // be rejected.
-  const isOwner = ctx.membership.role === 'OWNER';
+  const canApproveAgent = can(ctx.membership.role, 'agent.approve');
   const canSuspend = canTransitionAgent(agent.status, 'SUSPENDED');
   const canResume = canTransitionAgent(agent.status, 'ACTIVE') && agent.status === 'SUSPENDED';
   const canRevoke = canTransitionAgent(agent.status, 'REVOKED');
@@ -168,7 +168,7 @@ export default async function AgentDetailPage({
         <h2>Lifecycle</h2>
 
         {agent.status === 'PENDING_APPROVAL' ? (
-          isOwner ? (
+          canApproveAgent ? (
             <>
               <p className="small muted">
                 Approving this agent issues its first credential. It stays inert until then.
@@ -200,7 +200,7 @@ export default async function AgentDetailPage({
           </p>
         ) : null}
 
-        {isOwner && agent.status !== 'PENDING_APPROVAL' && agent.status !== 'REVOKED' ? (
+        {canApproveAgent && agent.status !== 'PENDING_APPROVAL' && agent.status !== 'REVOKED' ? (
           <div className="row" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
             {canSuspend ? (
               <ActionButton
@@ -230,11 +230,11 @@ export default async function AgentDetailPage({
           </div>
         ) : null}
 
-        {!isOwner && agent.status !== 'REVOKED' && agent.status !== 'PENDING_APPROVAL' ? (
+        {!canApproveAgent && agent.status !== 'REVOKED' && agent.status !== 'PENDING_APPROVAL' ? (
           <p className="small muted">Only an organization owner can change this agent's state.</p>
         ) : null}
 
-        {isOwner && agent.status === 'ACTIVE' ? (
+        {canApproveAgent && agent.status === 'ACTIVE' ? (
           <div className="stack" style={{ marginTop: '1.25rem' }}>
             <h3>Rotate credential</h3>
             <RotateAgentTokenForm

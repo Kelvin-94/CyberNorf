@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
 import { AuthEventActions } from '@/server/auth/events';
 import type { TenantContext } from '@/server/authz/context';
+import { can } from '@/server/authz/roles';
 import {
   canTransitionIdentity,
   evaluateIdentityRisk,
@@ -773,7 +774,7 @@ export async function createIdentity(
         metadata: { identifier, type: input.type, source: input.source },
       });
 
-      if (input.kind === 'MACHINE' && ctx.membership.role !== 'OWNER') {
+      if (input.kind === 'MACHINE' && !can(ctx.membership.role, 'identity.approve')) {
         await writeIdentityEvent(tx, {
           organizationId,
           identityId: identity.id,
@@ -1036,7 +1037,7 @@ export async function transitionIdentity(
 
   const action = LIFECYCLE[input.action];
 
-  if (input.action === 'APPROVE' && ctx.membership.role !== 'OWNER') {
+  if (input.action === 'APPROVE' && !can(ctx.membership.role, 'identity.approve')) {
     throw forbidden('Only an organization owner can approve a non-human identity.');
   }
 

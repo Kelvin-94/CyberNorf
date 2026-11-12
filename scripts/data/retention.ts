@@ -11,7 +11,7 @@ import { planRetention, pruneRateLimitWindows, purgeRetention } from '@/server/s
  *
  * Findings, incidents, assets, compliance evidence, and audit events are never
  * touched: they are business records or the append-only chain. What is removed
- * is agent runs, terminal alert deliveries, and package snapshots from agents
+ * is agent runs, terminal alert deliveries, and software inventory rows from agents
  * that stopped reporting. Each purge appends `retention.purged` with the cutoff
  * and the counts, so the chain explains where the history went.
  */
@@ -96,7 +96,7 @@ async function main(): Promise<void> {
     console.log(
       `  ${organization.slug}: cutoff ${summary.cutoff.slice(0, 10)}, ` +
         `${summary.runs} runs, ${summary.notificationEvents} alert deliveries, ` +
-        `${summary.softwareItems} package snapshots`,
+        `${summary.softwareItems} software inventory rows`,
     );
   }
 

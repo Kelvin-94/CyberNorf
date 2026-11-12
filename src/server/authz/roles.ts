@@ -14,6 +14,10 @@ export const CAPABILITIES = [
   'organization.read',
   'organization.update',
   'organization.manage_members',
+  // Granting or revoking an ADMIN or OWNER membership. Separated from
+  // organization.manage_members so an administrator can add analysts and
+  // viewers without being able to create a peer or a superior.
+  'member.manage_privileged',
   'asset.read',
   'asset.create',
   'asset.update',
@@ -34,12 +38,19 @@ export const CAPABILITIES = [
   'compliance.manage',
   'agent.read',
   'agent.manage',
+  // Approving, suspending, resuming or revoking an agent. An agent holds a
+  // credential that reports on the estate, so ending its access is an owner
+  // decision even though administrators register and configure agents.
+  'agent.approve',
   'notification.read',
   'notification.manage',
   'advisory.read',
   'advisory.manage',
   'identity.read',
   'identity.manage',
+  // Approving a non-human identity. An administrator may record one and
+  // submit it for review; only an owner can let it authenticate.
+  'identity.approve',
   'access_review.read',
   'access_review.manage',
   'indicator.read',
@@ -56,6 +67,7 @@ export const CAPABILITIES = [
   'execution.worker_manage',
   'retention.read',
   'retention.manage',
+  'retention.purge',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -64,6 +76,7 @@ export type Capability = (typeof CAPABILITIES)[number];
 export const MUTATING_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   'organization.update',
   'organization.manage_members',
+  'member.manage_privileged',
   'asset.create',
   'asset.update',
   'asset.delete',
@@ -78,9 +91,11 @@ export const MUTATING_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability
   'compliance.evidence',
   'compliance.manage',
   'agent.manage',
+  'agent.approve',
   'notification.manage',
   'advisory.manage',
   'identity.manage',
+  'identity.approve',
   'access_review.manage',
   'indicator.manage',
   'engagement.manage',
@@ -90,6 +105,7 @@ export const MUTATING_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability
   'execution.cancel',
   'execution.worker_manage',
   'retention.manage',
+  'retention.purge',
 ]);
 
 const READ_ONLY_CAPABILITIES: readonly Capability[] = [
@@ -170,13 +186,34 @@ const ADMIN_CAPABILITIES: readonly Capability[] = [
   'retention.manage',
 ];
 
+/**
+ * Owner is the superuser tier: everything an administrator can do, plus a
+ * short list of decisions that change who may act, what traffic is authorized,
+ * and whether retained history is destroyed. It is intentionally small — an
+ * owner is not a way around the product's controls. A second factor is still
+ * required for every mutating capability, every action is still audited, a
+ * requester still cannot approve their own authorization, and an owner still
+ * cannot read another tenant.
+ */
+export const OWNER_ONLY_CAPABILITIES = [
+  'member.manage_privileged',
+  'engagement.authorize',
+  'agent.approve',
+  'identity.approve',
+  'retention.purge',
+] as const satisfies readonly Capability[];
+
 // Exporting is deliberately *not* a viewer capability even though every record it
 // contains is individually readable by a viewer. A whole-organization export is
 // one file with every member's email and the complete audit trail, which is the
 // shape of an insider data-theft event rather than of ordinary reading. Keeping it
 // at analyst and above preserves the invariant that a viewer can only read.
 export const ROLE_CAPABILITIES: Readonly<Record<OrgRole, ReadonlySet<Capability>>> = {
-  OWNER: new Set<Capability>([...ADMIN_CAPABILITIES, 'export.download', 'engagement.authorize']),
+  OWNER: new Set<Capability>([
+    ...ADMIN_CAPABILITIES,
+    'export.download',
+    ...OWNER_ONLY_CAPABILITIES,
+  ]),
   ADMIN: new Set<Capability>([...ADMIN_CAPABILITIES, 'export.download']),
   ANALYST: new Set<Capability>([...ANALYST_CAPABILITIES, 'export.download']),
   VIEWER: new Set<Capability>(READ_ONLY_CAPABILITIES),
@@ -202,6 +239,15 @@ export function isMutating(capability: Capability): boolean {
 
 export function requiresSecondFactor(role: OrgRole, capability: Capability): boolean {
   return MFA_ENFORCED_ROLES.has(role) && MUTATING_CAPABILITIES.has(capability);
+}
+
+/**
+ * True when the role must enroll a second factor before any mutating action.
+ * The console banner and the server gate read the same set, so the warning a
+ * user sees cannot disagree with the check that blocks them.
+ */
+export function requiresSecondFactorEnrollment(role: OrgRole): boolean {
+  return MFA_ENFORCED_ROLES.has(role);
 }
 
 export function isAtLeast(role: OrgRole, minimum: OrgRole): boolean {

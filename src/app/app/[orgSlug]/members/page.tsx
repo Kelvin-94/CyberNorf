@@ -10,8 +10,9 @@ export const metadata: Metadata = { title: 'Members · CyberNorf' };
 export const dynamic = 'force-dynamic';
 
 const ROLE_DESCRIPTIONS: Record<string, string> = {
-  OWNER: 'Full control, including granting administrator roles.',
-  ADMIN: 'Manages assets, findings, incidents, and analysts.',
+  OWNER:
+    'Superuser: everything an administrator can do, plus privileged role grants, owner approvals and retention purges.',
+  ADMIN: 'Manages assets, findings, incidents, agents, and analysts.',
   ANALYST: 'Records and investigates findings and incidents.',
   VIEWER: 'Read-only access, including the audit trail.',
 };
@@ -25,10 +26,12 @@ export default async function MembersPage({ params }: { params: Promise<{ orgSlu
 
   const members = await listMembers(ctx.organization.id);
   const manage = can(ctx.membership.role, 'organization.manage_members');
-  const assignableRoles =
-    ctx.membership.role === 'OWNER'
-      ? ['OWNER', 'ADMIN', 'ANALYST', 'VIEWER']
-      : ['ANALYST', 'VIEWER'];
+  // Granting an ADMIN or OWNER membership is the owner-only
+  // member.manage_privileged capability. An administrator can still add and
+  // re-role analysts and viewers, just not create a peer or a superior.
+  const assignableRoles = can(ctx.membership.role, 'member.manage_privileged')
+    ? ['OWNER', 'ADMIN', 'ANALYST', 'VIEWER']
+    : ['ANALYST', 'VIEWER'];
 
   return (
     <>

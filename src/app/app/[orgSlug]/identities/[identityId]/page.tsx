@@ -52,13 +52,13 @@ export default async function IdentityDetailPage({
   const base = `/app/${ctx.organization.slug}`;
   const apiBase = `/api/v1/organizations/${ctx.organization.slug}/identities/${identity.id}`;
   const canManage = can(ctx.membership.role, 'identity.manage');
-  const isOwner = ctx.membership.role === 'OWNER';
+  const canApproveIdentity = can(ctx.membership.role, 'identity.approve');
   const isMachine = identity.kind === 'MACHINE';
   const members = canManage ? await listAssignableMembers(ctx.organization.id) : [];
 
   const canApprove =
     isMachine &&
-    isOwner &&
+    canApproveIdentity &&
     canTransitionIdentity(identity.status, 'ACTIVE') &&
     identity.status === 'PENDING_APPROVAL';
   const canSuspend = canTransitionIdentity(identity.status, 'SUSPENDED');
@@ -87,7 +87,7 @@ export default async function IdentityDetailPage({
       {identity.status === 'PENDING_APPROVAL' ? (
         <p className="banner warning">
           This identity cannot authenticate yet.{' '}
-          {isOwner ? 'Approve it below to activate it.' : 'An organization owner must approve it.'}
+          {canApproveIdentity ? 'Approve it below to activate it.' : 'An organization owner must approve it.'}
         </p>
       ) : null}
 
@@ -176,7 +176,7 @@ export default async function IdentityDetailPage({
               <span className="small muted">No lifecycle transition is available.</span>
             ) : null}
           </div>
-          {isMachine && !isOwner && identity.status === 'PENDING_APPROVAL' ? (
+          {isMachine && !canApproveIdentity && identity.status === 'PENDING_APPROVAL' ? (
             <p className="small muted" style={{ marginTop: '0.5rem' }}>
               Only an owner sees the approval action.
             </p>
