@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { MfaRequiredBanner } from '@/components/access-denied';
 import { SignOutButton } from '@/components/app/sign-out-button';
 import { NavLinks, type NavItem } from '@/components/nav-links';
-import { can, type Capability } from '@/server/authz/roles';
+import { can, requiresSecondFactorEnrollment, type Capability } from '@/server/authz/roles';
 import { loadTenantContext } from '@/server/ui/session';
 
 export const dynamic = 'force-dynamic';
@@ -69,8 +69,7 @@ export default async function OrganizationLayout({
     group: item.group,
   }));
   const mfaWarning =
-    (ctx.membership.role === 'OWNER' || ctx.membership.role === 'ADMIN') &&
-    !ctx.user.twoFactorEnabled;
+    requiresSecondFactorEnrollment(ctx.membership.role) && !ctx.user.twoFactorEnabled;
 
   return (
     <div className="app-shell">

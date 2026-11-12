@@ -78,10 +78,23 @@ CyberNorf is self-hosted. The production stack runs one console container agains
 
 **Phase 0, Phase 1 and Phase 4 are implemented, and parts of Phases 2, 3 and 5 ship** — endpoint monitoring and advisory matching, alert delivery, compliance evidence, dashboards, rate limits, health probes, tenant retention with a scheduled sweep, a restore drill and scoped execution. The application supports real multi-tenant workflows behind authenticated sessions, capability-based authorization, and a hash-chained audit trail. The remaining enterprise items in Phase 5 — SAML/SCIM, scheduled access reviews, an independent assessment and legal review — are not implemented; the [roadmap](ROADMAP.md) lists each gap per phase.
 
+### Where the roadmap stands
+
+The checklist is re-scanned rather than trusted: `grep -n '^- \[ \]' ROADMAP.md` lists every open item, and each one is then checked against the code. On 2026-11-12 that scan found **48 delivered items and 7 open**, and each open item is open for a reason a code change alone cannot close:
+
+- **Customer segment** — [ADR 0006](docs/decisions/0006-initial-customer-segment.md) is **Proposed** and needs design-partner feedback, not another document.
+- **Secrets handling** — startup validation, mounted secret files (`SECRETS_DIR`), the assisted rotation command and the keyed configuration fingerprint ship; there is no secrets-manager client, rotation is not scheduled, and no rotation has been drilled against a real deployment.
+- **API and tenant-isolation review** — the internal pass is complete and its one misbinding is fixed, but the reviewer is the author, so independence is outstanding.
+- **SSO** — one OpenID Connect provider; no SAML, SCIM, directory sync, or automatic de-provisioning.
+- **Administrative access reviews** — campaigns with per-item decisions and an assigned reviewer ship; scheduling, privileged-access campaigns and reviews of non-human credentials do not.
+- **Independent security assessment** and **legal/privacy review** — external work, not repository work.
+
+Delivered items are checked only when code, tests and documentation agree, and the [alignment notes](ROADMAP.md#alignment-notes) record what moved on each pass and why.
+
 ### What works today
 
-- **Accounts:** email and password registration and sign-in (12-character minimum passwords), optional OpenID Connect single sign-on, eight-hour sliding sessions, sign-out, and TOTP enrollment with ten backup codes at `/account/security`.
-- **Organizations:** create an organization, switch between organizations you belong to, and manage members and roles.
+- **Accounts:** email and password registration and sign-in (12-character minimum passwords), optional OpenID Connect single sign-on, eight-hour sliding sessions, sign-out, and TOTP enrollment with ten backup codes at `/account/security`. The account that creates an organization becomes its `OWNER`, and because owners and administrators are privileged, the server refuses their data changes until a second factor is enrolled. A banner on every organization page links to the enrollment screen, so enroll before adding the estate.
+- **Organizations:** create an organization, switch between organizations you belong to, and manage members and roles. `OWNER` is an explicit superuser tier: every administrator capability plus five owner-only decisions — grant or revoke an `ADMIN` or `OWNER` membership, approve or revoke an engagement authorization, approve, suspend or revoke an agent, approve a non-human identity, and purge retained history. Those decisions still require a second factor, are still audited, and never cross a tenant boundary.
 - **Identity governance:** inventory human and non-human identities with type, criticality, owner, and lifecycle status; register service accounts, monitoring agents, API clients, servers, network devices, IoT devices, and containers that start pending owner approval; issue, rotate, and revoke one scoped, expiring bearer credential per machine; and run membership access reviews whose retain/revoke decisions are recorded per member and finalize atomically ([details](docs/IDENTITY_GOVERNANCE.md)).
 - **Assets:** register, edit, retire, and inspect organization-owned assets with type, identifier, criticality, and lifecycle status.
 - **Findings:** create findings manually or import them as JSON, deduplicate by fingerprint, move them through the documented lifecycle, assign them, and record remediation. Every finding is scored 0–100 from severity, CVSS, and asset criticality, gets a remediation deadline from its severity, and can be filtered to just the overdue work; the dashboard reports SLA compliance and mean time to resolve ([details](docs/FINDINGS.md)).

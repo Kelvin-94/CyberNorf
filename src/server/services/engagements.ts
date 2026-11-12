@@ -2,6 +2,7 @@ import type { EngagementStatus, Prisma } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
 import { AuditActions, appendAuditEvent, recordAuditEvent } from '@/server/audit/audit';
 import type { TenantContext } from '@/server/authz/context';
+import { can } from '@/server/authz/roles';
 import {
   ScopeFormatError,
   normalizeScopeValue,
@@ -622,7 +623,7 @@ export async function decideAuthorization(
 ): Promise<AuthorizationView> {
   // Capability policy already restricts this to owners; the check is repeated so
   // a future route mistake cannot turn an admin into an authorizer.
-  if (ctx.membership.role !== 'OWNER') {
+  if (!can(ctx.membership.role, 'engagement.authorize')) {
     throw forbidden('Only an owner can decide an authorization.');
   }
 
@@ -733,7 +734,10 @@ export async function revokeAuthorization(
 
   // Revocation is an owner decision, matching approval. An admin can stop
   // execution through the job-cancel path without changing the authorization.
-  if (ctx.membership.role !== 'OWNER' && authorization.requestedById !== ctx.user.id) {
+  if (
+    !can(ctx.membership.role, 'engagement.authorize') &&
+    authorization.requestedById !== ctx.user.id
+  ) {
     throw forbidden('Only an owner can revoke an authorization.');
   }
 

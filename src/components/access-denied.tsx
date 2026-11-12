@@ -14,9 +14,13 @@ export function AccessDenied({ detail }: { detail?: string }) {
 
 export function MfaRequiredBanner() {
   return (
-    <p className="banner warning" role="alert">
-      Two-factor authentication is required before privileged roles can change data. Enable it under{' '}
-      <a href="/account/security">account security</a>.
-    </p>
+    <div className="banner warning" role="alert">
+      <strong>Two-factor authentication is required for your role.</strong> Reading, filtering and
+      exporting still work, but the server refuses every change to organization data until an
+      authenticator app is enrolled.{' '}
+      <a href="/account/security">Set up two-factor authentication</a> — it takes about a minute and
+      you will be asked for a six-digit code afterwards. This is deliberate: an owner or
+      administrator account is the most valuable credential in the tenant.
+    </div>
   );
 }

@@ -422,18 +422,18 @@ Two operator-run scripts and two API surfaces cover the data lifecycle. The scri
 | `npm run data:export -- --org acme --out acme.json`               | Writes one organization's records to a JSON file (mode `0600`)            |
 | `npm run evidence:verify-package -- acme-package.json`            | Recomputes a package's document digests and manifest signature, offline   |
 
-`--org` accepts a slug or an id. Retention is deliberately narrow: it removes **agent runs**, **terminal alert deliveries** (`SENT` or `FAILED`; a `PENDING` row is never touched), and **package snapshots** whose `lastSeenAt` is older than the cutoff, which only happens when the agent stopped reporting. Findings, incidents, assets, compliance evidence, and the audit trail are business records and are never removed by a timer; a person closes them. Deleting a finding from the console still cascades to its `ControlEvidence` rows, so export before a cleanup if that evidence is part of an audit story.
+`--org` accepts a slug or an id. Retention is deliberately narrow: it removes **agent runs**, **terminal alert deliveries** (`SENT` or `FAILED`; a `PENDING` row is never touched), and **software inventory rows** whose `lastSeenAt` is older than the cutoff, which only happens when the agent stopped reporting. Findings, incidents, assets, compliance evidence, and the audit trail are business records and are never removed by a timer; a person closes them. Deleting a finding from the console still cascades to its `ControlEvidence` rows, so export before a cleanup if that evidence is part of an audit story.
 
 The audit trail is append-only by trigger, so retention history itself is not trimmed: a purge adds one `retention.purged` event (actor `SYSTEM`, no user id) with the cutoff, the day count, and the exact number of rows removed. That is the answer to "where did last quarter's runs go".
 
-The export is a single JSON document (`meta.format = "cybernorf.export"`, version `1`) with members, assets, findings, incidents and notes, compliance frameworks, controls, evidence, check mappings, agents (without credentials), runs, advisories, package snapshots, alert destinations (without secrets), deliveries, and the full audit chain with its hashes. It contains no token hashes, token prefixes, sealed webhook secrets, sessions, password hashes, or second-factor secrets — an export is a file that travels, so it is safe to hand to the organization that owns the data. Verify a returned file's chain by checking `prevHash`/`hash` in `sequence` order.
+The export is a single JSON document (`meta.format = "cybernorf.export"`, version `1`) with members, assets, findings, incidents and notes, compliance frameworks, controls, evidence, check mappings, agents (without credentials), runs, advisories, software inventory rows, alert destinations (without secrets), deliveries, and the full audit chain with its hashes. It contains no token hashes, token prefixes, sealed webhook secrets, sessions, password hashes, or second-factor secrets — an export is a file that travels, so it is safe to hand to the organization that owns the data. Verify a returned file's chain by checking `prevHash`/`hash` in `sequence` order.
 
 A tenant can set the same windows itself, without an operator: `GET`/`PUT
 /api/v1/organizations/:orgSlug/settings/retention` stores a per-category policy
-(7–2555 days) for agent runs, alert deliveries, package snapshots and terminal
+(7–2555 days) for agent runs, alert deliveries, software inventory rows and terminal
 execution jobs; `POST .../retention/preview` counts what a stored or draft policy
 would remove; `POST .../retention/purge` deletes it after a literal confirmation
-string and the `OWNER` role. Running jobs are exempt. The CLI stays the operator
+string and the owner-only `retention.purge` capability. Running jobs are exempt. The CLI stays the operator
 path and also sweeps rate-limit windows.
 
 The signed package is the export to hand to an auditor. `GET

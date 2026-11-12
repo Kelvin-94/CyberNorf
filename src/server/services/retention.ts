@@ -1,6 +1,7 @@
 import { Prisma } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
 import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
+import { can, type OrgRole } from '@/server/authz/roles';
 import { badRequest, forbidden } from '@/server/errors';
 import type { RequestMeta } from '@/server/http/request-meta';
 
@@ -8,7 +9,7 @@ import type { RequestMeta } from '@/server/http/request-meta';
  * Data lifecycle for one organization.
  *
  * Retention is deliberately limited to derived operational history: agent runs,
- * delivered or failed alert deliveries, and package snapshots from agents that
+ * delivered or failed alert deliveries, and software inventory reported by agents that
  * stopped reporting. Findings, incidents, assets and compliance evidence are
  * business records with their own decision to keep or close, so they are never
  * removed by a timer — an operator closes them, and the export script takes
@@ -86,7 +87,7 @@ export async function purgeRetention(
         createdAt: { lt: cutoff },
       },
     });
-    // A package snapshot is only stale when its agent stopped reporting; an
+    // A software inventory row is only stale when its agent stopped reporting; an
     // agent that keeps reporting refreshes `lastSeenAt` on every run.
     const removedItems = await tx.softwareItem.deleteMany({
       where: { organizationId, lastSeenAt: { lt: cutoff } },
@@ -107,7 +108,7 @@ export async function purgeRetention(
       outcome: 'SUCCESS',
       targetType: 'organization',
       targetId: organizationId,
-      summary: `Purged history older than ${cutoff.toISOString().slice(0, 10)} (${summary.runs} runs, ${summary.notificationEvents} alert deliveries, ${summary.softwareItems} package snapshots)`,
+      summary: `Purged history older than ${cutoff.toISOString().slice(0, 10)} (${summary.runs} runs, ${summary.notificationEvents} alert deliveries, ${summary.softwareItems} software inventory rows)`,
       metadata: { days: options.days, ...summary },
       ipAddress: meta.ipAddress,
       userAgent: meta.userAgent,
@@ -133,7 +134,7 @@ export async function pruneRateLimitWindows(olderThanHours = 24): Promise<number
 /**
  * The single-window `planRetention`/`purgeRetention` calls above are what the
  * scheduled script uses. Enterprises need per-category windows instead: alert
- * deliveries are cheap to lose, package snapshots describe the estate and are
+ * deliveries are cheap to lose, software inventory describes the estate and is
  * kept longer, and execution history is evidence of what the platform ran. Each
  * category therefore gets its own window, stored per tenant.
  *
@@ -395,20 +396,21 @@ async function deletePastWindow(
 }
 
 /**
- * Deletes the categories that are past their window. Owner-only at the route
- * and here: an administrator can change the policy, but only an owner can make
- * the platform forget records, which is the irreversible half of retention.
+ * Deletes the categories that are past their window. The retention.purge
+ * capability is owner-only: an administrator can change the policy, but only an
+ * owner can make the platform forget records, which is the irreversible half of
+ * retention.
  */
 export async function purgeRetentionPolicy(
   ctx: {
     organization: { id: string };
     user: { id: string };
-    membership: { role: string };
+    membership: { role: OrgRole };
     meta: RequestMeta;
   },
   options: { policy?: RetentionPolicy; now?: Date } = {},
 ): Promise<RetentionPolicyPlan> {
-  if (ctx.membership.role !== 'OWNER') {
+  if (!can(ctx.membership.role, 'retention.purge')) {
     throw forbidden('Only an owner can purge retained history.');
   }
   const now = options.now ?? new Date();
@@ -432,7 +434,7 @@ export async function purgeRetentionPolicy(
       outcome: 'SUCCESS',
       targetType: 'organization',
       targetId: organizationId,
-      summary: `Purged retained history (${counts.runs} runs, ${counts.notificationEvents} alert deliveries, ${counts.softwareItems} package snapshots, ${counts.executionJobs} execution jobs)`,
+      summary: `Purged retained history (${counts.runs} runs, ${counts.notificationEvents} alert deliveries, ${counts.softwareItems} software inventory rows, ${counts.executionJobs} execution jobs)`,
       metadata: {
         policy: plan.policy,
         cutoffs: plan.cutoffs,
@@ -504,7 +506,7 @@ export async function enforceRetentionSchedules(
             outcome: 'SUCCESS',
             targetType: 'organization',
             targetId: stored.organizationId,
-            summary: `Scheduled retention purged ${counts.runs} runs, ${counts.notificationEvents} alert deliveries, ${counts.softwareItems} package snapshots and ${counts.executionJobs} execution jobs`,
+            summary: `Scheduled retention purged ${counts.runs} runs, ${counts.notificationEvents} alert deliveries, ${counts.softwareItems} software inventory rows and ${counts.executionJobs} execution jobs`,
             metadata: {
               policy,
               cutoffs: {

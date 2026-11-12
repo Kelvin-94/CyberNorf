@@ -41,7 +41,7 @@ Sensitivity is about the impact of disclosure, not about how likely it is.
 | Execution | `execution_workers` (name, capabilities, egress allowlist, heartbeat), `execution_jobs` (capability, target, resolved addresses, denial reason, timings, requester), `execution_job_events` (append-only timeline) | Control what ran or was denied, and prove it afterwards | Medium–High (targets and results) | Jobs and events until the tenant retention window (default 180 days); workers until revoked |
 | Retention policy | `organization_retention_policies` (four windows, change time) | Let a tenant set its own derived-history windows | Low | One row per organization, overwritten on change |
 | Security work | `assets`, `findings`, `incidents`, `incident_notes` | The case record: what is exposed, what is wrong, what was done | Medium–High (free text can contain customer details) | Permanent; never auto-purged |
-| Monitoring | `agents` (token hash, prefix, scopes, heartbeat), `agent_runs` (check results), `software_items` (installed packages) | Endpoint health and package inventory | Medium | Runs and package snapshots older than the retention window are purged; agents until revoked |
+| Monitoring | `agents` (token hash, prefix, scopes, heartbeat), `agent_runs` (check results), `software_items` (installed packages) | Endpoint health and package inventory | Medium | Runs and software inventory rows older than the retention window are purged; agents until revoked |
 | Intelligence | `advisories` (imported feed), `indicators` (normalised value, provenance, confidence, first/last seen), `indicator_links` (finding or incident, relation) | Vulnerability matching and IOC tracking with provenance | Medium | Permanent; never auto-purged |
 | Alerting | `notification_channels` (URL, sealed signing secret), `notification_events` (payload, status, attempts, last error) | Deliver alerts and prove what was delivered | Medium (payloads can name assets) | Channel until deleted; terminal deliveries older than the retention window are purged, pending ones are never purged |
 | Compliance | `frameworks`, `framework_controls` (global catalog), `organization_frameworks`, `organization_controls`, `control_evidence`, `check_control_maps` | Attestation and control evidence | Medium | Permanent; evidence files can be deleted through the API when they are not the last support for an implemented control |
@@ -139,7 +139,7 @@ Field-level notes that matter for a review:
 
 - **Purged automatically** by `npm run data:retention` (dry-run first, audited with
   `retention.purged`): agent runs older than the cutoff, terminal notification deliveries
-  older than the cutoff, package snapshots not seen since the cutoff, and expired rate-limit
+  older than the cutoff, software inventory rows not seen since the cutoff, and expired rate-limit
   windows. A tenant can override the windows for agent runs, alert deliveries, package
   snapshots and terminal execution jobs through `organization_retention_policies`
   (`POST .../settings/retention/purge`), which is owner-only, requires a literal confirmation

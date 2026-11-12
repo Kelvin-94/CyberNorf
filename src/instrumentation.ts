@@ -78,4 +78,15 @@ export async function register(): Promise<void> {
     secretsFromFiles: secretSources.fromFiles,
     configFingerprint: { status: fingerprint.status, digest: fingerprint.digest },
   });
+
+  // Scheduled delivery is opt-in, so a missing credential is not fatal. It is
+  // still the difference between a tenant policy running and never running, so
+  // say it once at startup instead of leaving it to a silent 503 later.
+  if (!process.env.CRON_SECRET) {
+    logger.warn('scheduler.not_configured', {
+      reason:
+        'CRON_SECRET is not set: /api/cron/retention and /api/cron/notifications answer 503 and no saved retention policy or alert sweep runs on a schedule.',
+      action: 'Generate one with `openssl rand -base64 32` and restart.',
+    });
+  }
 }

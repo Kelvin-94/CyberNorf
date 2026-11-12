@@ -2,7 +2,7 @@ import type { MembershipStatus } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
 import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
 import type { TenantContext } from '@/server/authz/context';
-import type { OrgRole } from '@/server/authz/roles';
+import { can, type OrgRole } from '@/server/authz/roles';
 import { badRequest, conflict, forbidden, notFound } from '@/server/errors';
 
 export interface MemberSummary {
@@ -51,7 +51,7 @@ function toSummary(membership: {
  * the caller to be an OWNER.
  */
 function assertCanManageRole(actorRole: OrgRole, role: OrgRole): void {
-  if (actorRole === 'OWNER') {
+  if (can(actorRole, 'member.manage_privileged')) {
     return;
   }
   if (role === 'OWNER' || role === 'ADMIN') {

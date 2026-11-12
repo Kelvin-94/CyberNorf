@@ -9,6 +9,7 @@ import {
 import { prisma } from '@/lib/prisma';
 import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
 import type { TenantContext } from '@/server/authz/context';
+import { can } from '@/server/authz/roles';
 import {
   canTransitionAgent,
   defaultAgentScopes,
@@ -370,9 +371,13 @@ export async function registerAgent(
   }
 }
 
-/** Approval and revocation are owner decisions, so the role check sits in the service. */
-function assertOwner(ctx: TenantContext): void {
-  if (ctx.membership.role !== 'OWNER') {
+/**
+ * Approval and revocation are owner decisions. `agent.approve` sits in the owner
+ * capability set, and the check is repeated in the service so a route mistake
+ * cannot hand an administrator control of an agent credential.
+ */
+function assertAgentApprover(ctx: TenantContext): void {
+  if (!can(ctx.membership.role, 'agent.approve')) {
     throw forbidden('Only an organization owner can approve, suspend, resume or revoke agents.');
   }
 }
@@ -420,7 +425,7 @@ export async function approveAgent(
   agentId: string,
   input: { scopes?: AgentScopeInput[]; note?: string | null },
 ): Promise<ApproveAgentResult> {
-  assertOwner(ctx);
+  assertAgentApprover(ctx);
   const agent = await loadAgent(ctx, agentId);
 
   if (agent.status === 'REVOKED') {
@@ -488,7 +493,7 @@ export async function suspendAgent(
   agentId: string,
   note: string | null = null,
 ): Promise<AgentView> {
-  assertOwner(ctx);
+  assertAgentApprover(ctx);
   const agent = await loadAgent(ctx, agentId);
   assertTransition(agent.status, 'SUSPENDED', 'suspend');
 
@@ -524,7 +529,7 @@ export async function resumeAgent(
   agentId: string,
   note: string | null = null,
 ): Promise<AgentView> {
-  assertOwner(ctx);
+  assertAgentApprover(ctx);
   const agent = await loadAgent(ctx, agentId);
   assertTransition(agent.status, 'ACTIVE', 'resume');
 
@@ -620,7 +625,7 @@ export async function revokeAgent(
   agentId: string,
   note: string | null = null,
 ): Promise<AgentView> {
-  assertOwner(ctx);
+  assertAgentApprover(ctx);
   const agent = await loadAgent(ctx, agentId);
   assertTransition(agent.status, 'REVOKED', 'revoke');
 
@@ -667,7 +672,7 @@ export async function rotateAgentToken(
   agentId: string,
   note: string | null = null,
 ): Promise<ApproveAgentResult> {
-  assertOwner(ctx);
+  assertAgentApprover(ctx);
   const agent = await loadAgent(ctx, agentId);
 
   if (agent.status !== 'ACTIVE') {

@@ -215,7 +215,7 @@ test('retention plan counts expiring rows without deleting anything', async () =
   assert.deepEqual(
     items.map((item) => item.id),
     [seeded.freshItemId],
-    'a refreshed package snapshot is kept',
+    'a refreshed software inventory row is kept',
   );
 });
 

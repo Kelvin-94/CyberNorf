@@ -61,7 +61,7 @@ export default async function RetentionPage({ params }: { params: Promise<{ orgS
     planRetentionPolicy(ctx.organization.id),
   ]);
   const canManage = can(ctx.membership.role, 'retention.manage');
-  const canPurge = ctx.membership.role === 'OWNER';
+  const canPurge = can(ctx.membership.role, 'retention.purge');
   const totalDue = Object.values(plan.counts).reduce((sum, count) => sum + count, 0);
   const base = `/app/${ctx.organization.slug}`;
   const endpoint = `/api/v1/organizations/${ctx.organization.slug}/settings/retention`;

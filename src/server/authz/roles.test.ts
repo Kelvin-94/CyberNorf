@@ -4,11 +4,13 @@ import {
   CAPABILITIES,
   MUTATING_CAPABILITIES,
   ORG_ROLES,
+  OWNER_ONLY_CAPABILITIES,
   can,
   isAtLeast,
   isMutating,
   isOrgRole,
   requiresSecondFactor,
+  requiresSecondFactorEnrollment,
   type Capability,
   type OrgRole,
 } from './roles.ts';
@@ -73,11 +75,19 @@ test('compliance attestation requires a second factor for privileged roles', () 
 });
 
 test('administrators can administer but never exceed owners', () => {
-  // Only these capabilities are owner-exclusive, and each must stay listed so
-  // a new one cannot appear without this test changing on purpose. Approving an
-  // engagement authorization is reserved for owners; administrators prepare the
-  // engagement and request the authorization.
-  const ownerOnly = new Set<Capability>(['engagement.authorize']);
+  // The owner superuser tier is exactly this list: privileged role grants,
+  // engagement authorization, agent approval, machine-identity approval and
+  // retention purge. Each must stay listed so a new one cannot appear without
+  // this test changing on purpose, and an administrator must never receive one
+  // by accident.
+  const ownerOnly = new Set<Capability>(OWNER_ONLY_CAPABILITIES);
+  assert.deepEqual([...ownerOnly].sort(), [
+    'agent.approve',
+    'engagement.authorize',
+    'identity.approve',
+    'member.manage_privileged',
+    'retention.purge',
+  ]);
   for (const capability of CAPABILITIES) {
     const owner = can('OWNER', capability);
     const admin = can('ADMIN', capability);
@@ -103,12 +113,38 @@ test('every capability is either mutating or read-only, never both', () => {
   assert.equal(MUTATING_CAPABILITIES.size > 0, true);
 });
 
+test('owner-only decisions still require a second factor', () => {
+  for (const capability of OWNER_ONLY_CAPABILITIES) {
+    assert.equal(isMutating(capability), true, `${capability} should be mutating`);
+    assert.equal(
+      requiresSecondFactor('OWNER', capability),
+      true,
+      `OWNER / ${capability} should require a second factor`,
+    );
+    assert.equal(can('ADMIN', capability), false, `ADMIN should not have ${capability}`);
+    assert.equal(can('OWNER', capability), true, `OWNER should have ${capability}`);
+  }
+});
+
 test('second factor is required only for privileged mutating actions', () => {
   assert.equal(requiresSecondFactor('OWNER', 'asset.create'), true);
   assert.equal(requiresSecondFactor('ADMIN', 'finding.import'), true);
   assert.equal(requiresSecondFactor('OWNER', 'audit.read'), false);
   assert.equal(requiresSecondFactor('ANALYST', 'asset.create'), false);
   assert.equal(requiresSecondFactor('VIEWER', 'asset.create'), false);
+});
+
+test('the enrollment banner agrees with the server gate for every role', () => {
+  // The console computes the banner from requiresSecondFactorEnrollment while
+  // withTenantApi computes the block from requiresSecondFactor, so the two must
+  // not diverge: a role that is warned must also be stopped, and vice versa.
+  for (const role of ORG_ROLES) {
+    const warned = requiresSecondFactorEnrollment(role);
+    const enforced = CAPABILITIES.some((capability) => requiresSecondFactor(role, capability));
+    assert.equal(warned, enforced, `${role} banner and gate disagree`);
+  }
+  assert.equal(requiresSecondFactorEnrollment('OWNER'), true);
+  assert.equal(requiresSecondFactorEnrollment('ANALYST'), false);
 });
 
 test('role helpers reject unknown roles', () => {

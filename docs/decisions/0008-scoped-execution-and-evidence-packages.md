@@ -47,7 +47,7 @@ The enterprise brief calls for agentless scanning and remote response. Building 
 
 ### Retention is per tenant, with a floor
 
-- `OrganizationRetentionPolicy` stores four independent windows (agent runs, alert deliveries, package snapshots, execution jobs). Every window has a minimum of 7 days and a maximum of 2555.
+- `OrganizationRetentionPolicy` stores four independent windows (agent runs, alert deliveries, software inventory rows, execution jobs). Every window has a minimum of 7 days and a maximum of 2555.
 - `GET .../settings/retention/preview` counts what the stored or draft policy would delete without deleting anything. `POST .../settings/retention/purge` requires the literal confirmation string and the `OWNER` role, and writes `retention.purged` with the cutoffs and the authoritative delete counts.
 - Running jobs are never deleted, whatever the window, and audit events are outside the policy entirely: the chain is append-only by trigger.
 
