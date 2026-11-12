@@ -27,6 +27,7 @@
     "config:check": "tsx scripts/config-check.ts",
     "quota": "tsx --env-file-if-exists=.env scripts/quota.ts",
     "evidence:verify": "tsx --env-file-if-exists=.env scripts/evidence-integrity.ts",
+    "evidence:verify-package": "tsx --env-file-if-exists=.env scripts/data/verify-evidence-package.ts",
     "secrets:rotate": "tsx scripts/secrets-rotate.ts",
     "data:export": "tsx --env-file-if-exists=.env scripts/data/export.ts",
     "data:retention": "tsx --env-file-if-exists=.env scripts/data/retention.ts",

@@ -34,6 +34,11 @@ const ROTATABLE = {
     consequence:
       'Invalidates the provider client secret. Rotate it at the identity provider first, then restart; keep password sign-in available in case of a mismatch.',
   },
+  EVIDENCE_SIGNING_KEY: {
+    bytes: 32,
+    consequence:
+      'Packages issued with the old key must be verified with that key and its key id. Change EVIDENCE_SIGNING_KEY_ID with the key so each manifest names the key that signed it.',
+  },
 } as const;
 
 type RotatableName = keyof typeof ROTATABLE;

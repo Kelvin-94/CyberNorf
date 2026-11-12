@@ -365,6 +365,36 @@ export function validateEnvironment(
   // warnings that do matter. The startup log states `evidenceUpload: false`
   // explicitly, so the state is discoverable without being framed as a fault.
 
+  // --- evidence packages ------------------------------------------------
+  // Signing is optional as a whole (the package route answers 503 when the key
+  // is absent), but a key that is present and too short is a misconfiguration
+  // that would produce signatures nobody should trust. The key id is carried in
+  // every manifest so a rotation keeps old packages verifiable with the old key.
+  const evidenceSigningKey = read(env, 'EVIDENCE_SIGNING_KEY');
+  if (evidenceSigningKey.length > 0) {
+    if (evidenceSigningKey.length < 32) {
+      errors.push({
+        variable: 'EVIDENCE_SIGNING_KEY',
+        message: 'must be at least 32 characters; a shorter key weakens every package signature.',
+        severity: 'error',
+      });
+    } else {
+      accepted.push('EVIDENCE_SIGNING_KEY');
+    }
+  }
+  const evidenceSigningKeyId = read(env, 'EVIDENCE_SIGNING_KEY_ID');
+  if (evidenceSigningKeyId.length > 0) {
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(evidenceSigningKeyId)) {
+      errors.push({
+        variable: 'EVIDENCE_SIGNING_KEY_ID',
+        message: 'must be 1-64 characters of letters, digits, dot, dash or underscore.',
+        severity: 'error',
+      });
+    } else {
+      accepted.push('EVIDENCE_SIGNING_KEY_ID');
+    }
+  }
+
   // --- transport policy ---------------------------------------------------
   // Delegated so the rule lives in one place, but each leg is checked on its
   // own: a bad origin must not hide a cleartext database, or the operator fixes

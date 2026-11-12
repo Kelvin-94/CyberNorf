@@ -212,6 +212,41 @@ test('an unknown LOG_LEVEL warns and keeps the documented fallback', () => {
   assert.ok(accepted.accepted.includes('LOG_LEVEL'));
 });
 
+test('an absent evidence signing key is allowed, a short one is refused', () => {
+  const absent = validateEnvironment(productionEnv(), { production: true });
+  assert.equal(absent.ok, true);
+  assert.ok(!variables(absent).includes('EVIDENCE_SIGNING_KEY'));
+
+  const short = validateEnvironment(productionEnv({ EVIDENCE_SIGNING_KEY: 'a'.repeat(31) }), {
+    production: true,
+  });
+  assert.equal(short.ok, false);
+  const issue = short.errors.find((entry) => entry.variable === 'EVIDENCE_SIGNING_KEY');
+  assert.match(issue?.message ?? '', /at least 32/);
+
+  const complete = validateEnvironment(productionEnv({ EVIDENCE_SIGNING_KEY: 'a'.repeat(32) }), {
+    production: true,
+  });
+  assert.equal(complete.ok, true);
+  assert.ok(complete.accepted.includes('EVIDENCE_SIGNING_KEY'));
+});
+
+test('a malformed evidence key id is refused, because it travels in every manifest', () => {
+  const bad = validateEnvironment(
+    productionEnv({ EVIDENCE_SIGNING_KEY: 'a'.repeat(32), EVIDENCE_SIGNING_KEY_ID: 'bad id!' }),
+    { production: true },
+  );
+  assert.equal(bad.ok, false);
+  assert.ok(bad.errors.some((entry) => entry.variable === 'EVIDENCE_SIGNING_KEY_ID'));
+
+  const good = validateEnvironment(
+    productionEnv({ EVIDENCE_SIGNING_KEY: 'a'.repeat(32), EVIDENCE_SIGNING_KEY_ID: 'pkg-2026.11' }),
+    { production: true },
+  );
+  assert.equal(good.ok, true);
+  assert.ok(good.accepted.includes('EVIDENCE_SIGNING_KEY_ID'));
+});
+
 test('no message ever contains a configured value', () => {
   const secret = 'super-secret-auth-value-that-must-not-be-printed';
   const cron = 'cron-secret-value-that-must-not-be-printed';

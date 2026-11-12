@@ -31,6 +31,31 @@ export function getAppOrigin(): string {
   return requireEnv('BETTER_AUTH_URL').replace(/\/+$/, '');
 }
 
+export interface EvidenceSigningKey {
+  keyId: string;
+  secret: string;
+}
+
+/**
+ * Key used to sign portable evidence packages. There is no development
+ * fallback: an unsigned package is not a substitute for a signed one, so a
+ * deployment that has not configured a key gets a clear error rather than a
+ * package nobody can verify.
+ */
+export function getEvidenceSigningKey(): EvidenceSigningKey {
+  const secret = requireEnv('EVIDENCE_SIGNING_KEY');
+  if (secret.length < 32) {
+    throw new Error('EVIDENCE_SIGNING_KEY must be at least 32 characters.');
+  }
+  const keyId = process.env.EVIDENCE_SIGNING_KEY_ID?.trim();
+  return { keyId: keyId && keyId.length > 0 ? keyId : 'default', secret };
+}
+
+/** True when a usable package signing key is configured. */
+export function hasEvidenceSigningKey(): boolean {
+  return (process.env.EVIDENCE_SIGNING_KEY?.trim() ?? '').length >= 32;
+}
+
 export function isProduction(): boolean {
   return process.env.NODE_ENV === 'production';
 }

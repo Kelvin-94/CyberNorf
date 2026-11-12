@@ -42,6 +42,7 @@ export const FILE_SECRET_VARIABLES = [
   'OIDC_ISSUER',
   'OIDC_CLIENT_ID',
   'EVIDENCE_DIR',
+  'EVIDENCE_SIGNING_KEY',
 ] as const;
 
 export type FileSecretVariable = (typeof FILE_SECRET_VARIABLES)[number];

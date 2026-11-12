@@ -185,6 +185,9 @@ export const createAccessReviewSchema = z
       .max(120, 'Title must be 120 characters or fewer.'),
     description: optionalDescription(2000),
     dueAt: isoDateTimeSchema,
+    // Optional at creation: a campaign can be opened now and assigned before
+    // anyone records a decision.
+    reviewerId: z.string().trim().min(1).max(64).nullable().optional(),
   })
   .superRefine((value, ctx) => {
     const now = Date.now();
@@ -206,6 +209,12 @@ export const createAccessReviewSchema = z
   });
 
 export type CreateAccessReviewInput = z.infer<typeof createAccessReviewSchema>;
+
+export const assignAccessReviewReviewerSchema = z.object({
+  reviewerId: z.string().trim().min(1).max(64).nullable(),
+});
+
+export type AssignAccessReviewReviewerInput = z.infer<typeof assignAccessReviewReviewerSchema>;
 
 export const decideAccessReviewItemSchema = z.object({
   decision: accessReviewDecisionSchema,

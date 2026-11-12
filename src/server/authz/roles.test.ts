@@ -73,10 +73,20 @@ test('compliance attestation requires a second factor for privileged roles', () 
 });
 
 test('administrators can administer but never exceed owners', () => {
+  // Only these capabilities are owner-exclusive, and each must stay listed so
+  // a new one cannot appear without this test changing on purpose. Approving an
+  // engagement authorization is reserved for owners; administrators prepare the
+  // engagement and request the authorization.
+  const ownerOnly = new Set<Capability>(['engagement.authorize']);
   for (const capability of CAPABILITIES) {
     const owner = can('OWNER', capability);
     const admin = can('ADMIN', capability);
-    assert.equal(admin, owner, `${capability} differs between OWNER and ADMIN`);
+    assert.equal(admin && !owner, false, `${capability} is granted to ADMIN but not OWNER`);
+    assert.equal(
+      owner && !admin,
+      ownerOnly.has(capability),
+      `${capability} is owner-only but not declared`,
+    );
   }
 });
 

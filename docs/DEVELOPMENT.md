@@ -31,21 +31,23 @@ Compose publishes PostgreSQL on `POSTGRES_HOST_PORT` (default `5432`). If that p
 
 ### Environment variables
 
-| Variable                        | Required                | Purpose                                                                                           |
-| ------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                  | yes                     | PostgreSQL connection string used by Prisma and the app.                                          |
-| `BETTER_AUTH_SECRET`            | yes outside development | Signs sessions and encrypts second-factor secrets. 32+ characters in production.                  |
-| `BETTER_AUTH_URL`               | yes                     | Public origin. Used for cookies, trusted origins, and the same-origin check.                      |
-| `POSTGRES_HOST_PORT`            | Compose only            | Host port mapped to the PostgreSQL container.                                                     |
-| `CRON_SECRET`                   | for alert sweep         | Bearer token the scheduler presents to `/api/cron/notifications`; 24+ chars.                      |
-| `LOG_LEVEL`                     | no                      | Minimum level written to stdout: `debug`, `info`, `warn` or `error`; defaults to `info`.          |
-| `NOTIFY_ALLOW_PRIVATE_WEBHOOKS` | no                      | `true` allows alert destinations on loopback/private addresses (internal collector only).         |
-| `AGENT_REQUIRE_SIGNED_RUNS`     | no                      | `true` refuses unsigned agent submissions; set it once every host runs a signing monitor.         |
-| `OIDC_ISSUER`                   | with SSO                | Identity provider issuer URL; discovery is read from `<issuer>/.well-known/openid-configuration`. |
-| `OIDC_CLIENT_ID`                | with SSO                | Client id registered at the identity provider for this deployment.                                |
-| `OIDC_CLIENT_SECRET`            | with SSO                | Client secret; required together with the issuer and client id.                                   |
-| `OIDC_DISPLAY_NAME`             | no                      | Label of the "Continue with …" button; defaults to `single sign-on`.                              |
-| `OIDC_REDIRECT_URI`             | no                      | Only when the browser reaches the app at a different origin than `BETTER_AUTH_URL`.               |
+| Variable                        | Required                | Purpose                                                                                                |
+| ------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`                  | yes                     | PostgreSQL connection string used by Prisma and the app.                                               |
+| `BETTER_AUTH_SECRET`            | yes outside development | Signs sessions and encrypts second-factor secrets. 32+ characters in production.                       |
+| `BETTER_AUTH_URL`               | yes                     | Public origin. Used for cookies, trusted origins, and the same-origin check.                           |
+| `POSTGRES_HOST_PORT`            | Compose only            | Host port mapped to the PostgreSQL container.                                                          |
+| `CRON_SECRET`                   | for alert sweep         | Bearer token the scheduler presents to `/api/cron/notifications`; 24+ chars.                           |
+| `LOG_LEVEL`                     | no                      | Minimum level written to stdout: `debug`, `info`, `warn` or `error`; defaults to `info`.               |
+| `NOTIFY_ALLOW_PRIVATE_WEBHOOKS` | no                      | `true` allows alert destinations on loopback/private addresses (internal collector only).              |
+| `AGENT_REQUIRE_SIGNED_RUNS`     | no                      | `true` refuses unsigned agent submissions; set it once every host runs a signing monitor.              |
+| `EVIDENCE_SIGNING_KEY`          | for signed packages     | HMAC-SHA256 key (32+ chars) over evidence-package manifests; unset makes `/export/package` answer 503. |
+| `EVIDENCE_SIGNING_KEY_ID`       | no                      | Label written into each manifest; defaults to `default`, change it with the key when rotating.         |
+| `OIDC_ISSUER`                   | with SSO                | Identity provider issuer URL; discovery is read from `<issuer>/.well-known/openid-configuration`.      |
+| `OIDC_CLIENT_ID`                | with SSO                | Client id registered at the identity provider for this deployment.                                     |
+| `OIDC_CLIENT_SECRET`            | with SSO                | Client secret; required together with the issuer and client id.                                        |
+| `OIDC_DISPLAY_NAME`             | no                      | Label of the "Continue with …" button; defaults to `single sign-on`.                                   |
+| `OIDC_REDIRECT_URI`             | no                      | Only when the browser reaches the app at a different origin than `BETTER_AUTH_URL`.                    |
 
 If Prisma reports `P1001: Can't reach database server` while `nc -z 127.0.0.1 <port>` succeeds, replace `localhost` with `127.0.0.1` in the connection string. Some macOS setups resolve `localhost` to IPv6 first, where the container is not listening.
 
@@ -410,7 +412,7 @@ The unit tests cover the settings reader; `src/server/auth/oidc.test.ts` runs wi
 
 ## Data retention and export
 
-Two operator-run scripts cover the data lifecycle. Both load `.env`, so they talk to whatever database that file names; run them from a host that can reach Postgres.
+Two operator-run scripts and two API surfaces cover the data lifecycle. The scripts load `.env`, so they talk to whatever database that file names; run them from a host that can reach Postgres.
 
 | Command                                                           | Effect                                                                    |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -418,6 +420,7 @@ Two operator-run scripts cover the data lifecycle. Both load `.env`, so they tal
 | `npm run data:retention -- --org acme --days 90 --apply`          | Deletes that history for one organization and appends `retention.purged`  |
 | `npm run data:retention -- --days 90 --apply --prune-rate-limits` | Also removes rate-limit windows untouched for 24 hours                    |
 | `npm run data:export -- --org acme --out acme.json`               | Writes one organization's records to a JSON file (mode `0600`)            |
+| `npm run evidence:verify-package -- acme-package.json`            | Recomputes a package's document digests and manifest signature, offline   |
 
 `--org` accepts a slug or an id. Retention is deliberately narrow: it removes **agent runs**, **terminal alert deliveries** (`SENT` or `FAILED`; a `PENDING` row is never touched), and **package snapshots** whose `lastSeenAt` is older than the cutoff, which only happens when the agent stopped reporting. Findings, incidents, assets, compliance evidence, and the audit trail are business records and are never removed by a timer; a person closes them. Deleting a finding from the console still cascades to its `ControlEvidence` rows, so export before a cleanup if that evidence is part of an audit story.
 
@@ -425,7 +428,24 @@ The audit trail is append-only by trigger, so retention history itself is not tr
 
 The export is a single JSON document (`meta.format = "cybernorf.export"`, version `1`) with members, assets, findings, incidents and notes, compliance frameworks, controls, evidence, check mappings, agents (without credentials), runs, advisories, package snapshots, alert destinations (without secrets), deliveries, and the full audit chain with its hashes. It contains no token hashes, token prefixes, sealed webhook secrets, sessions, password hashes, or second-factor secrets — an export is a file that travels, so it is safe to hand to the organization that owns the data. Verify a returned file's chain by checking `prevHash`/`hash` in `sequence` order.
 
-Neither script is scheduled for you; wrap them in cron or a systemd timer. A dry run first is the norm, and the export is the backup step before any purge.
+A tenant can set the same windows itself, without an operator: `GET`/`PUT
+/api/v1/organizations/:orgSlug/settings/retention` stores a per-category policy
+(7–2555 days) for agent runs, alert deliveries, package snapshots and terminal
+execution jobs; `POST .../retention/preview` counts what a stored or draft policy
+would remove; `POST .../retention/purge` deletes it after a literal confirmation
+string and the `OWNER` role. Running jobs are exempt. The CLI stays the operator
+path and also sweeps rate-limit windows.
+
+The signed package is the export to hand to an auditor. `GET
+/api/v1/organizations/:orgSlug/export/package` returns the export document plus a
+manifest with each document's SHA-256 and byte length, the audit-chain head at
+signing time and an HMAC-SHA256 signature under `EVIDENCE_SIGNING_KEY`;
+`npm run evidence:verify-package` checks all of it with no database and no
+session. Without a signing key the route answers `503` rather than emitting an
+unsigned package.
+
+Neither script is scheduled for you; wrap them in cron or a systemd timer. A dry
+run first is the norm, and the export is the backup step before any purge.
 
 After adding a migration, apply it to the test database before running the suite:
 
