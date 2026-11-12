@@ -60,6 +60,20 @@ export function isProduction(): boolean {
   return process.env.NODE_ENV === 'production';
 }
 
+const DEFAULT_MAX_ACTIVE_EXECUTION_JOBS = 20;
+
+/**
+ * How many execution jobs a single tenant may have in flight
+ * (PENDING_REVIEW, QUEUED or RUNNING) at once. Execution is the one place where
+ * the platform spends another machine's capacity, so an unbounded queue is both
+ * an availability risk and a way to drown the review desk. Invalid or unset
+ * values fall back to the default rather than removing the limit.
+ */
+export function getMaxActiveExecutionJobs(): number {
+  const raw = Number.parseInt(process.env.EXECUTION_MAX_ACTIVE_JOBS ?? '', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_ACTIVE_EXECUTION_JOBS;
+}
+
 const TLS_SSLMODES = new Set(['require', 'verify-ca', 'verify-full']);
 
 /**

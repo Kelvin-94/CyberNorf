@@ -430,3 +430,72 @@ test('a failing check titles the finding with the reported faulty state', async 
   assert.equal((creationEvent.metadata as { agentId?: string }).agentId, registration.agent.id);
   assert.equal((creationEvent.metadata as { runId?: string }).runId, result.run.id);
 });
+
+test('an exhausted finding quota skips new findings but still records the run', async () => {
+  const tenant = await createTenant({ role: 'OWNER', twoFactorEnabled: true });
+  const registration = await registerAgent(tenant.ctx, {
+    name: 'quota-run-agent',
+    source: 'BUILTIN',
+  });
+  const token = registration.token ?? assert.fail('expected a builtin token');
+  const principal = await authenticateAgentToken(token);
+
+  // The tier default would allow hundreds of findings; an explicit override of
+  // one makes the ceiling reachable in a single test without seeding rows.
+  await prisma.organizationQuota.upsert({
+    where: { organizationId: tenant.organization.id },
+    create: { organizationId: tenant.organization.id, findings: 1 },
+    update: { findings: 1 },
+  });
+
+  const first = await recordAgentRun(principal, monitoringReport());
+  assert.equal(first.findingsCreated, 1);
+  assert.equal(first.findingsSkippedForQuota, 0);
+
+  // A different failing check needs a second row, and there is no room left.
+  const second = await recordAgentRun(principal, {
+    ...monitoringReport(),
+    checks: [
+      {
+        id: 'vuln.firewall',
+        title: 'Host firewall is enabled',
+        status: 'FAIL' as const,
+        severity: 'HIGH' as const,
+        detail: 'Firewall is disabled.',
+      },
+      {
+        id: 'vuln.filevault',
+        title: 'Full-disk encryption is enabled',
+        status: 'PASS' as const,
+        severity: 'MEDIUM' as const,
+      },
+    ],
+  });
+
+  // The run itself is still evidence: it succeeded, its checks are stored, and
+  // the skipped finding is counted rather than silently dropped.
+  assert.equal(second.run.checkCount, 2);
+  assert.equal(second.run.failCount, 1);
+  assert.equal(second.findingsCreated, 0);
+  assert.equal(second.findingsSkippedForQuota, 1);
+  assert.equal(
+    await prisma.finding.count({
+      where: { organizationId: tenant.organization.id, source: 'AGENT' },
+    }),
+    1,
+  );
+
+  const audit = await prisma.auditEvent.findFirstOrThrow({
+    where: {
+      organizationId: tenant.organization.id,
+      action: 'agent.run_recorded',
+      targetType: 'agent',
+      targetId: registration.agent.id,
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { metadata: true },
+  });
+  const metadata = audit.metadata as { runId?: string; findingsSkippedForQuota?: number };
+  assert.equal(metadata.runId, second.run.id);
+  assert.equal(metadata.findingsSkippedForQuota, 1);
+});

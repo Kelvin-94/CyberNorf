@@ -33,6 +33,12 @@ const NAV_ITEMS: Array<{
   { href: '/audit', label: 'Audit trail', group: 'Govern', capability: 'audit.read' },
   { href: '/members', label: 'Members', group: 'Govern', capability: 'organization.read' },
   { href: '/settings', label: 'Settings', group: 'Govern', capability: 'organization.read' },
+  {
+    href: '/settings/retention',
+    label: 'Retention',
+    group: 'Govern',
+    capability: 'retention.read',
+  },
 ];
 
 export default async function OrganizationLayout({

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ActionForm } from '@/components/action-form';
 import { NotificationChannelActions } from '@/components/settings/notification-channel-actions';
@@ -99,6 +100,20 @@ export default async function SettingsPage({ params }: { params: Promise<{ orgSl
           Your role is read-only for organization settings.
         </p>
       )}
+
+      <section className="card stack" style={{ marginTop: '1.5rem' }}>
+        <h2>Data retention</h2>
+        <p className="small muted">
+          Agent runs, alert deliveries, software inventory and finished execution jobs follow
+          per-category windows. The audit trail, findings, incidents and evidence are kept
+          regardless of the policy.
+        </p>
+        <p>
+          <Link href={`/app/${ctx.organization.slug}/settings/retention`}>
+            Open retention settings
+          </Link>
+        </p>
+      </section>
 
       <section className="card stack" style={{ marginTop: '1.5rem' }}>
         <h2>Alert destinations</h2>

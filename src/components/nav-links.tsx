@@ -12,6 +12,11 @@ export interface NavItem {
 export function NavLinks({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
   const groups: Array<NavItem['group']> = ['Investigate', 'Govern'];
+  // Several entries can be prefixes of the current path (Settings and
+  // Settings → Retention). Only the deepest match is the page being viewed.
+  const activeHref = items
+    .filter((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
 
   return (
     <nav className="nav" aria-label="Organization">
@@ -24,7 +29,7 @@ export function NavLinks({ items }: { items: NavItem[] }) {
           <div key={group} className="nav-group">
             <p className="nav-group-label">{group}</p>
             {groupItems.map((item) => {
-              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+              const active = item.href === activeHref;
               return (
                 <Link
                   key={item.href}

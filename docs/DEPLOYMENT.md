@@ -121,15 +121,30 @@ The drill creates and drops a database, so the connection needs `CREATEDB`. For 
 
 If the drill reports `hash_mismatch` or `link_mismatch`, stop: the audit chain in the archive does not match its own hashes, which means the source was modified out of band or the dump is damaged. Do not restore that archive over production without investigating first.
 
-**Application-level export.** `npm run data:export -- --org <slug> --out <file>` writes one tenant's records with a credential-free audit chain. Run it from a checkout that can reach the database; there is no export endpoint, so the script is the only path.
+The drill compares `CHECK` constraints by their sorted conjuncts rather than by raw text, because PostgreSQL re-parses a restored predicate and a logically identical definition can come back with different grouping. Predicates containing `OR`, `NOT`, `BETWEEN` or a subquery are compared exactly, where the grouping does matter.
+
+**Availability and recovery targets.** The single-host stack targets the following, and the drill is the evidence that the restore path exists:
+
+| Target                          | Value    | What has to be true                                                                                                                                                      |
+| ------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Recovery time objective (RTO)   | 4 hours  | Rebuild the host, restore the latest dump into a fresh volume, run `migrate`, pass the restore drill, then return traffic.                                               |
+| Recovery point objective (RPO)  | 24 hours | One `pg_dump` per day, stored outside the host. A dump kept only on the database volume is not a backup: losing the host loses it too.                                   |
+| Drill duration, current dataset | 2.7 s    | Measured on 2026-11-12: 45 tables, 16 migrations, 177 constraints, 625 audit events recomputed. The report is archived as `docs/evidence/restore-drill-2026-11-12.json`. |
+
+The measured duration is a development-size dataset, not production evidence: it shows the dump, restore and verification path works, not that a production database restores inside the RTO. Re-run the drill against a production-size copy before relying on the target, and record the result. A tighter RPO needs continuous archiving: PostgreSQL WAL archiving to object storage, or a managed database with point-in-time recovery, which replaces the daily dump in the table above.
+
+**Application-level export.** `GET /api/v1/organizations/{slug}/export` downloads one tenant's records and audit chain as JSON behind the `export.download` capability, rate-limited to five requests per five minutes; `GET …/export/package` returns the signed package described above at three per five minutes. `npm run data:export -- --org <slug> --out <file>` remains the offline path for a checkout that can reach the database.
 
 **Scheduled alert sweep.** The platform ships no worker, so a timer calls the cron route:
 
 ```cron
 */10 * * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://cybernorf.example.com/api/cron/notifications >/dev/null
+15 2 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://cybernorf.example.com/api/cron/retention >/dev/null
 ```
 
-**Retention.** `npm run data:retention -- --days 90 --apply` prunes agent runs, delivered alerts and stale package snapshots. Run it dry first, and export before it runs.
+The second timer applies each tenant's saved retention policy. It is safe to run more often than daily: an organization with nothing past its window is left untouched and writes no audit entry. An organization that never saved a policy is skipped entirely, so a default nobody confirmed never deletes records. The route answers `500` when any tenant's sweep failed and reports which ones, so a failing timer is visible instead of looking like a clean run.
+
+**Retention.** Each tenant sets its own windows in the console under _Settings → Retention_, backed by `GET`/`PUT /api/v1/organizations/{slug}/settings/retention`, `GET …/retention/preview` and `POST …/retention/purge`. Reading needs `retention.read`; changing the policy needs OWNER or ADMIN; purging is OWNER-only and records the exact deleted counts in the audit chain. The console preview is read-only, and findings, incidents, evidence and the audit chain are outside the policy. For a one-off operator sweep there is also `npm run data:retention -- --days 90 --apply`, which prunes agent runs, delivered alerts and stale package snapshots; run it dry first, and export before it runs.
 
 **Upgrades.**
 
@@ -164,6 +179,24 @@ Notes that matter during an incident:
 - Discovery (`<issuer>/.well-known/openid-configuration`) is fetched by the app, so the container needs egress to the provider. The `edge` network the app shares with the proxy provides it; the `backend` network stays internal. The fetch is bounded to five seconds at startup and on the sign-in retry, so an unresponsive provider cannot hang the first request: if it is down when the app starts, SSO is unavailable until the next sign-in attempt retries discovery, and passwords still work.
 - An IdP user whose verified email matches an existing CyberNorf account is signed in as that account, with its existing memberships. Unverified addresses are refused, and no role or organization is ever taken from a token claim.
 - Removing a user from the provider does not remove the CyberNorf account or its sessions. Deactivate the membership in the console as well.
+
+## Data residency and subprocessors
+
+CyberNorf runs entirely on infrastructure the operator chooses: one application container and one PostgreSQL database, with no vendor-operated control plane, no telemetry and no licence check. Tenant records — assets, findings, incidents, identities, evidence, retention policies and the append-only audit chains — live in that database and in the volumes `compose.prod.yaml` mounts. The data region is therefore the region of the host and of the backups; nothing in the stack copies tenant data anywhere else.
+
+The stack makes these outbound connections, and no others:
+
+| Destination                                           | When                                                  | What leaves                                                                            | Can it be turned off                                                                                  |
+| ----------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| ACME certificate authority (Let's Encrypt by default) | certificate issue and renewal                         | the public hostname and the `ACME_EMAIL` contact                                       | Yes. Terminate TLS on an upstream proxy or load balancer and serve the app over its internal network. |
+| OpenID Connect provider                               | only when SSO is configured, at sign-in and discovery | the authorization request and the provider's own claims                                | Yes. Leave the `OIDC_*` variables unset and use password sign-in.                                     |
+| Tenant-configured webhook endpoints                   | alert delivery, on a timer or a manual test           | event id and type, organization id, agent name/source, health and the observation time | Yes. Configure no alert destinations.                                                                 |
+| Container registry                                    | image pull during deploy                              | no tenant data                                                                         | Yes. Mirror the image into a registry you control.                                                    |
+| DNS resolver                                          | webhook hostname validation and execution dispatch    | the webhook hostname, or the engagement's target name                                  | The resolver is host configuration; point it at a resolver in your jurisdiction.                      |
+
+**Subprocessors.** There are none by default: the operator runs the software and remains the controller of the data. Enabling SSO adds the identity provider as a subprocessor for authentication data, and configuring an alert destination adds that receiver as a subprocessor for the alert payload. Both are the operator's choice, configured per tenant, and both can be removed without touching the database.
+
+**Data location controls.** Point `DATABASE_URL` at a managed database in the required region (see below), keep dumps in that region, and use `npm run data:export -- --org <slug>` for a portable copy. Deleting an organization cascades to its tenant rows; the audit trail of that deletion is retained, as the compliance record.
 
 ## Managed database instead of the bundled one
 
