@@ -87,7 +87,9 @@ export default async function IdentityDetailPage({
       {identity.status === 'PENDING_APPROVAL' ? (
         <p className="banner warning">
           This identity cannot authenticate yet.{' '}
-          {canApproveIdentity ? 'Approve it below to activate it.' : 'An organization owner must approve it.'}
+          {canApproveIdentity
+            ? 'Approve it below to activate it.'
+            : 'An organization owner must approve it.'}
         </p>
       ) : null}
 

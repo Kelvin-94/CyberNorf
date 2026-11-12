@@ -734,7 +734,10 @@ export async function revokeAuthorization(
 
   // Revocation is an owner decision, matching approval. An admin can stop
   // execution through the job-cancel path without changing the authorization.
-  if (!can(ctx.membership.role, 'engagement.authorize') && authorization.requestedById !== ctx.user.id) {
+  if (
+    !can(ctx.membership.role, 'engagement.authorize') &&
+    authorization.requestedById !== ctx.user.id
+  ) {
     throw forbidden('Only an owner can revoke an authorization.');
   }
 
