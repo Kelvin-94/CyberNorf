@@ -16,7 +16,7 @@ document rewritten, not extended.
 | --- | --- | --- |
 | PostgreSQL | Every business record, account, audit event and quota override; see the inventory below. | TLS with `sslmode=verify-full` in production; database credentials in the deployment environment; row access always scoped by `organizationId`. |
 | Evidence volume (`EVIDENCE_DIR`) | Uploaded control-evidence blobs, sharded as `<root>/<first two hex>/<32 hex>`, files `0640`, directories `0750`. | Absolute path outside the image; blob key validated against `^[a-f0-9]{32}$` and resolved inside the root; the database row stores the SHA-256 recorded while the bytes were written. |
-| Mounted secret files (`SECRETS_DIR`) | One file per allow-listed variable: `BETTER_AUTH_SECRET`, `CRON_SECRET`, `OIDC_CLIENT_SECRET`. | Read at startup, never written back, group/world-readable files refused; a file wins over the same variable in the environment. |
+| Mounted secret files (`SECRETS_DIR`) | One file per allow-listed variable: `BETTER_AUTH_SECRET`, `CRON_SECRET`, `OIDC_CLIENT_SECRET`, `EVIDENCE_SIGNING_KEY`. | Read at startup, never written back, group/world-readable files refused; a file wins over the same variable in the environment. |
 | Process environment | The same secrets when no files are mounted, plus `DATABASE_URL` and configuration. | `chmod 600` env file in production; `npm run config:check` reports problems without printing values. |
 | Container stdout | Structured JSON logs: request lifecycle, startup, delivery outcomes, errors. | Values pass through the audit redactor; access logs stay at the proxy so requests are not logged twice. |
 | Browser | Session cookie, CSRF-relevant origin, in-memory page state. | `HttpOnly` cookie, same-origin checks on every mutation. |
@@ -36,7 +36,10 @@ Sensitivity is about the impact of disclosure, not about how likely it is.
 | Personal API keys | `user_api_keys` (SHA-256 hash, six-character prefix, scopes, expiry, last use) | Automation without a browser session | High | Until revoked or expired; the plaintext is shown once and never stored |
 | Tenant | `organizations` (name, slug, tier), `memberships` (role, status) | Tenancy and authorization | Low | No automatic purge; tenant removal is an operator procedure |
 | Identity inventory | `identities` (kind, type, identifier, owner, criticality, lifecycle status), `identity_credentials` (SHA-256 hash, prefix, scopes, expiry), `identity_events` (append-only timeline) | Know which humans and machines exist, who owns them, and what they may do | High | Identities until deprovisioned or deleted; events append-only |
-| Access reviews | `access_reviews`, `access_review_items` (member snapshot, role at review, decision, reviewer, note) | Demonstrate periodic recertification | Medium | Kept as the record of the review; no automatic purge |
+| Access reviews | `access_reviews` (including `reviewerId`, the assigned reviewer), `access_review_items` (member snapshot, role at review, decision, reviewer, note) | Demonstrate periodic recertification | Medium | Kept as the record of the review; no automatic purge |
+| Engagements | `engagements` (status, window), `engagement_scope_entries` (kind, target type, value), `engagement_authorizations` (requester, approver, window, status) | Record who authorized which testing against which targets, and until when | Medium–High (targets reveal infrastructure) | Permanent; scope and authorization history is the record |
+| Execution | `execution_workers` (name, capabilities, egress allowlist, heartbeat), `execution_jobs` (capability, target, resolved addresses, denial reason, timings, requester), `execution_job_events` (append-only timeline) | Control what ran or was denied, and prove it afterwards | Medium–High (targets and results) | Jobs and events until the tenant retention window (default 180 days); workers until revoked |
+| Retention policy | `organization_retention_policies` (four windows, change time) | Let a tenant set its own derived-history windows | Low | One row per organization, overwritten on change |
 | Security work | `assets`, `findings`, `incidents`, `incident_notes` | The case record: what is exposed, what is wrong, what was done | Medium–High (free text can contain customer details) | Permanent; never auto-purged |
 | Monitoring | `agents` (token hash, prefix, scopes, heartbeat), `agent_runs` (check results), `software_items` (installed packages) | Endpoint health and package inventory | Medium | Runs and package snapshots older than the retention window are purged; agents until revoked |
 | Intelligence | `advisories` (imported feed), `indicators` (normalised value, provenance, confidence, first/last seen), `indicator_links` (finding or incident, relation) | Vulnerability matching and IOC tracking with provenance | Medium | Permanent; never auto-purged |
@@ -113,7 +116,10 @@ Field-level notes that matter for a review:
     marked `Cache-Control: private, no-store`, and appends `export.downloaded` to the audit
     chain. The document contains business records and the audit trail with its hashes; it
     excludes credential material (see the export `EXCLUDED` list and `EXPORT_VERSION` in
-    `src/server/services/export.ts`).
+    `src/server/services/export.ts`). The signed variant, `GET .../export/package`, wraps
+    the same document in a manifest with a per-document SHA-256 and an HMAC-SHA256
+    signature (`EVIDENCE_SIGNING_KEY`) and appends `export.package_signed`; the offline
+    verifier needs neither a session nor the database.
 
 ## Trust boundaries
 
@@ -125,6 +131,7 @@ Field-level notes that matter for a review:
 | App ↔ database | Every tenant record | TLS in production, least-privilege database role, tenant predicate on every query |
 | App ↔ evidence volume | File bytes and hashes | Path validation inside the root, streaming hash, size and content-type limits, integrity sweep |
 | App ↔ webhook receiver | Alert payload and signature | Public-address resolution, sealed signing secret, bounded retries |
+| App ↔ execution worker | Job instruction (capability, target, approved addresses) and result | Worker registered by a member with `execution.manage`, egress allowlist and heartbeat decide eligibility, start re-checks DNS, lease expiry fails a stale job |
 | Operator ↔ host | Database credentials, secrets, exports | OS access control, `chmod 600` env files, no secret values in output |
 | Tenant ↔ tenant | Nothing | Membership-derived tenant context on every route and page; negative tests in `tests/tenant-isolation.test.ts` |
 
@@ -133,7 +140,10 @@ Field-level notes that matter for a review:
 - **Purged automatically** by `npm run data:retention` (dry-run first, audited with
   `retention.purged`): agent runs older than the cutoff, terminal notification deliveries
   older than the cutoff, package snapshots not seen since the cutoff, and expired rate-limit
-  windows.
+  windows. A tenant can override the windows for agent runs, alert deliveries, package
+  snapshots and terminal execution jobs through `organization_retention_policies`
+  (`POST .../settings/retention/purge`), which is owner-only, requires a literal confirmation
+  and records the cutoffs and counts in the same audit event. Running jobs are exempt.
 - **Never purged automatically:** findings, incidents, assets, identities, access reviews,
   indicators, compliance evidence, audit and authentication events. These are the record the
   product exists to keep; removing them is a tenant or operator decision, not a background
@@ -147,9 +157,10 @@ Field-level notes that matter for a review:
   /api/v1/organizations/[orgSlug]/compliance/controls/[controlId]/evidence/files/[evidenceId]`,
   which removes the blob as well as the row and refuses to leave an implemented control
   without evidence.
-- **Leaves the system** only as an authorized export (§10 above), as an operator-run
-  `data:export`, or as a database backup produced by the deployment procedure. Nothing is
-  sent to a third party except alert deliveries to channels the tenant configured.
+- **Leaves the system** only as an authorized export (§10 above) in either form — plain
+  JSON or signed package — as an operator-run `data:export`, or as a database backup
+  produced by the deployment procedure. Nothing is sent to a third party except alert
+  deliveries to channels the tenant configured.
 
 ## Backups and residency
 

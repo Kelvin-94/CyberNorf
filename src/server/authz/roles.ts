@@ -46,6 +46,16 @@ export const CAPABILITIES = [
   'indicator.manage',
   'indicator.delete',
   'export.download',
+  'engagement.read',
+  'engagement.manage',
+  'engagement.authorize',
+  'execution.read',
+  'execution.dispatch',
+  'execution.review',
+  'execution.cancel',
+  'execution.worker_manage',
+  'retention.read',
+  'retention.manage',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -73,6 +83,13 @@ export const MUTATING_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability
   'identity.manage',
   'access_review.manage',
   'indicator.manage',
+  'engagement.manage',
+  'engagement.authorize',
+  'execution.dispatch',
+  'execution.review',
+  'execution.cancel',
+  'execution.worker_manage',
+  'retention.manage',
 ]);
 
 const READ_ONLY_CAPABILITIES: readonly Capability[] = [
@@ -88,6 +105,9 @@ const READ_ONLY_CAPABILITIES: readonly Capability[] = [
   'identity.read',
   'access_review.read',
   'indicator.read',
+  'engagement.read',
+  'execution.read',
+  'retention.read',
 ];
 
 const ANALYST_CAPABILITIES: readonly Capability[] = [
@@ -105,6 +125,14 @@ const ANALYST_CAPABILITIES: readonly Capability[] = [
   // Analysts record, update and link indicators; deleting one removes the
   // provenance of every linked record, which is reserved for administrators.
   'indicator.manage',
+  // Analysts may open an engagement, inspect its scope, and request a job
+  // within an approved authorization. They cannot change scope, approve an
+  // authorization, review their own high-risk request, or manage workers.
+  'engagement.read',
+  'execution.read',
+  'execution.dispatch',
+  'execution.cancel',
+  'retention.read',
 ];
 
 const ADMIN_CAPABILITIES: readonly Capability[] = [
@@ -133,6 +161,13 @@ const ADMIN_CAPABILITIES: readonly Capability[] = [
   // Deleting an indicator destroys the provenance of everything linked to it,
   // so it is an administrator action even though analysts may record and link.
   'indicator.delete',
+  // Scope, authorization decisions and worker eligibility decide where traffic
+  // may go, so changing them is an administrator action. Authorization approval
+  // is deliberately reserved for owners in the owner capability set below.
+  'engagement.manage',
+  'execution.review',
+  'execution.worker_manage',
+  'retention.manage',
 ];
 
 // Exporting is deliberately *not* a viewer capability even though every record it
@@ -141,7 +176,7 @@ const ADMIN_CAPABILITIES: readonly Capability[] = [
 // shape of an insider data-theft event rather than of ordinary reading. Keeping it
 // at analyst and above preserves the invariant that a viewer can only read.
 export const ROLE_CAPABILITIES: Readonly<Record<OrgRole, ReadonlySet<Capability>>> = {
-  OWNER: new Set<Capability>([...ADMIN_CAPABILITIES, 'export.download']),
+  OWNER: new Set<Capability>([...ADMIN_CAPABILITIES, 'export.download', 'engagement.authorize']),
   ADMIN: new Set<Capability>([...ADMIN_CAPABILITIES, 'export.download']),
   ANALYST: new Set<Capability>([...ANALYST_CAPABILITIES, 'export.download']),
   VIEWER: new Set<Capability>(READ_ONLY_CAPABILITIES),

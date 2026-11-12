@@ -11,6 +11,7 @@ pinned by tests, because guessing them is how a rotation becomes an incident.
 - [Rotating CRON_SECRET](#rotating-cron_secret)
 - [Rotating the database password](#rotating-the-database-password)
 - [Rotating the identity-provider secret](#rotating-the-identity-provider-secret)
+- [Rotating the package signing key](#rotating-the-package-signing-key)
 - [Credentials issued inside the app](#credentials-issued-inside-the-app)
 - [Mounted secret files](#mounted-secret-files)
 - [Configuration fingerprint](#configuration-fingerprint)
@@ -45,6 +46,8 @@ The rules it enforces:
 | `OIDC_*`                        | all three of `OIDC_ISSUER`/`CLIENT_ID`/`CLIENT_SECRET`, or none; issuer `https://` outside loopback | error           |
 | `SECRETS_DIR`                   | absolute path if set; each entry is validated when it is read                                       | error           |
 | `EVIDENCE_DIR`                  | absolute path if set; unset means file evidence is unavailable, not broken                          | error           |
+| `EVIDENCE_SIGNING_KEY`          | at least 32 characters if set; unset disables signed packages, and the route answers 503            | error           |
+| `EVIDENCE_SIGNING_KEY_ID`       | 1–64 letters, digits, dot, dash or underscore if set; recorded in every manifest                    | error           |
 | `NODE_ENV`                      | `development`, `test` or `production`; unset warns                                                  | warning         |
 | `LOG_LEVEL`                     | `debug`, `info`, `warn` or `error`; unknown warns and falls back to `info`                          | warning         |
 
@@ -55,14 +58,15 @@ refuses that instead of letting it boot.
 
 ## Secret inventory
 
-| Variable                                      | What it protects                                                                              | If it leaks                                                                                                                    | Changing it invalidates                                                               |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| `BETTER_AUTH_SECRET`                          | Signs session tokens; encrypts TOTP secrets and backup codes; derives the webhook sealing key | Forged sessions for any account: full takeover. Treat as total compromise.                                                     | **Every session**, every enrolled second factor, and every sealed webhook signing key |
-| `DATABASE_URL`                                | The password inside it authenticates the app to PostgreSQL                                    | Direct read/write access to all tenant data and the audit trail                                                                | Nothing, once the database password is changed                                        |
-| `CRON_SECRET`                                 | Bearer token for `POST /api/cron/notifications`                                               | Ability to trigger the alert sweep early. No data is returned.                                                                 | Nothing; update the scheduler in the same step                                        |
-| `OIDC_CLIENT_SECRET`                          | Authenticates CyberNorf to the identity provider                                              | An attacker who can also redirect the browser could attempt code interception; it does not grant access to CyberNorf by itself | Nothing; restart picks it up                                                          |
-| `OIDC_CLIENT_ID`                              | Public client identifier                                                                      | Nothing — it is not a secret                                                                                                   | —                                                                                     |
-| `LOG_LEVEL`, `BETTER_AUTH_URL`, `OIDC_ISSUER` | Behaviour and addresses, not secrets                                                          | Nothing                                                                                                                        | —                                                                                     |
+| Variable                                      | What it protects                                                                              | If it leaks                                                                                                                                                  | Changing it invalidates                                                               |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET`                          | Signs session tokens; encrypts TOTP secrets and backup codes; derives the webhook sealing key | Forged sessions for any account: full takeover. Treat as total compromise.                                                                                   | **Every session**, every enrolled second factor, and every sealed webhook signing key |
+| `DATABASE_URL`                                | The password inside it authenticates the app to PostgreSQL                                    | Direct read/write access to all tenant data and the audit trail                                                                                              | Nothing, once the database password is changed                                        |
+| `CRON_SECRET`                                 | Bearer token for `POST /api/cron/notifications`                                               | Ability to trigger the alert sweep early. No data is returned.                                                                                               | Nothing; update the scheduler in the same step                                        |
+| `OIDC_CLIENT_SECRET`                          | Authenticates CyberNorf to the identity provider                                              | An attacker who can also redirect the browser could attempt code interception; it does not grant access to CyberNorf by itself                               | Nothing; restart picks it up                                                          |
+| `EVIDENCE_SIGNING_KEY`                        | Signs evidence-package manifests so a copy that left the platform can be checked              | Anyone holding it can produce a package that verifies. It grants no database access, so the exposure is forged or altered package evidence, not tenant data. | Every package issued with the old key must be verified with that key and its key id   |
+| `OIDC_CLIENT_ID`                              | Public client identifier                                                                      | Nothing — it is not a secret                                                                                                                                 | —                                                                                     |
+| `LOG_LEVEL`, `BETTER_AUTH_URL`, `OIDC_ISSUER` | Behaviour and addresses, not secrets                                                          | Nothing                                                                                                                                                      | —                                                                                     |
 
 `BETTER_AUTH_SECRET` is the one to guard hardest: it is doing three jobs at once.
 That is also why rotating it is disruptive, and why the procedure below is not
@@ -159,6 +163,24 @@ when `CRON_SECRET` is unset. Rotation has no lasting effect:
 Rotate during a period when at least one administrator can use password sign-in,
 so a provider mistake cannot lock everyone out of the console.
 
+## Rotating the package signing key
+
+`EVIDENCE_SIGNING_KEY` signs portable evidence packages: HMAC-SHA256 over the
+canonical manifest. It is symmetric, so whoever holds it can both verify a
+package and produce one that verifies. Give it only to the recipients who must
+check packages, and keep it with the archives when the key is retired.
+
+1. Choose the next key id, for example `2026-12`, and generate the key:
+   `npm run secrets:rotate -- --name EVIDENCE_SIGNING_KEY --dir /run/secrets/cybernorf --apply`.
+2. Set `EVIDENCE_SIGNING_KEY_ID=2026-12` in the environment, restart, and confirm
+   `server.started` reports `features.evidencePackages: true`. Packages issued from
+   now on carry the new key id.
+3. Keep the old key. A package is verifiable only with the key id and secret it
+   was signed with, and `npm run evidence:verify-package` reads both from the
+   environment, so verifying an old package means running it with the old pair.
+4. Nothing is re-signed in place. A package already distributed stays valid under
+   its own key id; re-issue it when the recipient needs it under the new key.
+
 ## Credentials issued inside the app
 
 These never appear in the environment; rotate them in the UI or API, and revoke
@@ -208,10 +230,11 @@ The directory is an argument rather than a read of `SECRETS_DIR` on purpose: a
 command that can replace a mounted secret should name its target explicitly
 instead of inheriting whatever the calling shell happens to export.
 
-`BETTER_AUTH_SECRET`, `CRON_SECRET` and `OIDC_CLIENT_SECRET` can be generated this
-way; `DATABASE_URL` cannot, because rotating it needs a matching change in
-PostgreSQL. The command refuses to overwrite an existing file without `--force`
-and prints the blast radius of the rotation it is about to perform.
+`BETTER_AUTH_SECRET`, `CRON_SECRET`, `OIDC_CLIENT_SECRET` and
+`EVIDENCE_SIGNING_KEY` can be generated this way; `DATABASE_URL` cannot, because
+rotating it needs a matching change in PostgreSQL. The command refuses to
+overwrite an existing file without `--force` and prints the blast radius of the
+rotation it is about to perform.
 
 ## Configuration fingerprint
 

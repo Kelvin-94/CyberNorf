@@ -30,6 +30,7 @@ export const POST = withTenantApi<Params>(
       title: input.title,
       dueAt: input.dueAt,
       ...(input.description !== undefined ? { description: input.description } : {}),
+      ...(input.reviewerId !== undefined ? { reviewerId: input.reviewerId } : {}),
     });
     return jsonResponse({ review }, meta, 201);
   },

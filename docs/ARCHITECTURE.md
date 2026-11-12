@@ -1,6 +1,6 @@
 # CyberNorf — Initial Architecture
 
-**Status:** Mixed. The [implemented Phase 1 foundation](#implemented-phase-1-foundation) section describes code that exists and is covered by automated tests. Everything after it describes the target design for later phases and is not implemented.
+**Status:** Mixed. The [implemented Phase 1 foundation](#implemented-phase-1-foundation) section describes code that exists and is covered by automated tests, including the identity-governance, scoped-execution and data-lifecycle work delivered after it. Sections that describe later phases or target design are not implemented; each remaining gap is listed under known limitations.
 
 ## Goals
 
@@ -33,6 +33,9 @@
 | Identity-governance domain rules (lifecycle, credentials, risk) | `src/server/domain/identity.ts`                                              |
 | Identity inventory, credential and access-review services       | `src/server/services/identities.ts`, `src/server/services/access-reviews.ts` |
 | Machine-identity bearer route wrapper                           | `src/server/api/identity.ts`                                                 |
+| Execution scope engine, denial descriptions, redirect chain     | `src/server/domain/execution.ts`                                             |
+| Engagement, authorization, worker and job services              | `src/server/services/engagements.ts`, `src/server/services/execution.ts`     |
+| Signed evidence package build and verification                  | `src/server/services/evidence-package.ts`, `scripts/data/verify-evidence-package.ts` |
 | Builtin offline host monitor                                    | `scripts/agent/monitor.mjs`                                                  |
 | UI routes and components                                        | `src/app/**`, `src/components/**`                                            |
 | Tests                                                           | `tests/*.test.ts`, `src/**/*.test.ts`                                        |
@@ -150,6 +153,21 @@ Agents collect host evidence and submit it to CyberNorf. The platform never call
 - Software inventory: a run may carry up to 800 packages (`inventory`). The server resolves the report hostname to a tenant asset, creating a `HOSTNAME` asset when the host is new, and replaces that agent's snapshot with the reported list, so an uninstalled package does not linger. Each package is then matched against the tenant's advisories of the same ecosystem: name comparison is case-insensitive, ecosystems never cross-match, and the range is evaluated by the comparator in `src/server/domain/versions.ts`. A match creates one finding per advisory and host (`<package> <version> is affected by <identifier>`, `source = AGENT`, `cveId` set only when the identifier is a CVE, remediation naming the fixed version). A repeat run refreshes that finding instead of duplicating it, and a finding a person closed is left alone. Importing an advisory does not scan retroactively; the next run of each agent performs the match.
 - Heartbeats: an agent with an expected interval is `ONLINE`, `STALE`, or `OFFLINE` based on how many intervals have passed since its last run. `GET /api/cron/notifications` performs one bounded sweep and delivery pass, authenticated by a constant-time `CRON_SECRET` bearer check that fails closed with `503` when unconfigured. A host that stops reporting queues one alert per enabled destination, deduplicated per outage, and a host that reports again queues a recovery while dropping any outage alert that has not been sent yet. Delivery is a signed webhook (`x-cybernorf-signature` over timestamp and body) with five backoff attempts; attempts are claimed atomically so overlapping sweeps cannot double-send.
 
+### Scoped execution control plane
+
+Active testing is the only capability that acts on a system outside the platform, so it is stored, approved and evaluated as data rather than trusted to the caller (`src/server/domain/execution.ts`, `src/server/services/engagements.ts`, `src/server/services/execution.ts`).
+
+- Engagements: one organization, a status (`DRAFT`, `ACTIVE`, `PAUSED`, `CLOSED`) and a `startsAt`/`endsAt` window. A job outside an active window is denied before any target is resolved.
+- Scope: `INCLUDE` and `EXCLUDE` entries over `DOMAIN`, `IP_ADDRESS`, `CIDR` or `URL`, evaluated deny-by-default. A target must match an inclusion and no exclusion, and an exclusion wins over a broader inclusion. A `URL` rule pins scheme, host, port and a path prefix, so approving one path does not approve the whole host; a `DOMAIN` rule also covers its subdomains.
+- Authorization: an `EngagementAuthorization` has its own window and must be `APPROVED`, with the requester and the approver as different people (`engagement.authorize`). Revocation takes effect on the next evaluation. The capabilities `engagement.read`, `engagement.manage` and `engagement.authorize` are separate, so an analyst can prepare scope without being able to authorize it.
+- Two enforcement points, not one. Dispatch records the decision, the resolved target, the approved address set and the risk on the job, so a later scope edit cannot rewrite what was allowed. Start re-evaluates the stored authorization against the current scope and compares the current DNS answer with the recorded set; a changed answer is denied (`address_changed`) instead of followed. A redirect is evaluated as a new target rather than inherited, and a chain is allowed only when every hop is in scope.
+- Denials are recorded, not thrown away: the job ends `DENIED`, its event timeline keeps the machine reason, and the audit summary carries a human sentence from `describeDenial`.
+- Workers: a registered `ExecutionWorker` declares capabilities and an egress allowlist and must heartbeat. Dispatch only queues to a worker whose allowlist covers the target; a registered but unheard-from worker is ineligible, and a job with no eligible worker is denied (`no_eligible_worker`) rather than waiting indefinitely.
+- Job timeline: `ExecutionJobEvent` is append-only (`REQUESTED`, `DISPATCH_DENIED`, `QUEUED`, `STARTED`, `COMPLETED`, `CANCELLED`, review events), which is what an operator reads to answer why a job did or did not run. A `HIGH`-risk job is created `PENDING_REVIEW`, and approval re-runs the dispatch check, including the DNS comparison, before it queues.
+- Cancellation is a request, not a status change: the worker holding the lease decides, a completion report that arrives afterwards loses to the cancellation, and repeating the request is idempotent. A cleanup pass cancels reviews left undecided and fails jobs whose lease expired, so nothing stays non-terminal forever.
+
+The routes are `/api/v1/organizations/:orgSlug/engagements` (scope, authorizations, jobs) and `/api/v1/organizations/:orgSlug/execution` (workers). This revision has no console screen for any of them; see the limitations below.
+
 ### Audit trail
 
 Appends are transactional with the mutation, have a per-organization advisory lock, and are chained with SHA-256 over a canonical serialization (`sequence`, previous hash, actor, action, outcome, target, summary, metadata, timestamp). A database trigger rejects `UPDATE` and `DELETE`. `GET /api/v1/organizations/:orgSlug/audit/verify` recomputes the chain and reports the first broken sequence; the audit page exposes the same check.
@@ -158,23 +176,31 @@ Authentication activity lives in a second trail, `auth_events`, because a sign-i
 
 ### Data lifecycle
 
-Operational history is separated from business records. An operator-run CLI (`npm run data:retention`) purges only derived history — agent runs, terminal alert deliveries, and package snapshots whose agent stopped reporting — after a configurable number of days, and appends one `retention.purged` audit event carrying the cutoff and the row counts. Findings, incidents, assets, compliance evidence, and audit events are never removed by a timer: closing them is a human decision, and the audit chain is append-only by trigger. `npm run data:export` writes one organization's records to a JSON document whose select lists omit every credential (agent token hash and prefix, sealed webhook secret, sessions, password hashes, second-factor secrets) while keeping the audit chain's hashes so the file verifies on its own. Neither script runs on a scheduler; deployments wire them into cron or a systemd timer.
+Operational history is separated from business records. Findings, incidents, assets, compliance evidence, access reviews, and audit events are never removed by a timer: closing them is a human decision, and the audit chain is append-only by trigger. Only derived history is pruned, through one of two paths.
+
+`npm run data:retention` is the operator path: one window over agent runs, delivered or failed alert deliveries, and package snapshots whose agent stopped reporting, with one `retention.purged` event carrying the cutoff and the counts. A tenant can instead store its own policy through `GET`/`PUT /api/v1/organizations/:orgSlug/settings/retention` — four independent windows for agent runs (90 days by default), alert deliveries (90), package snapshots (180) and terminal execution jobs (180), each clamped to 7–2555 days so a tenant can keep data longer than the default but cannot claim a one-day window and still hold the record. `POST .../settings/retention/preview` counts what the stored or draft policy would delete without deleting anything; `POST .../settings/retention/purge` requires the literal confirmation string and the `OWNER` role, and records the cutoffs and the authoritative delete counts in the chain. Running execution jobs are exempt whatever the window.
+
+Export has two forms. `npm run data:export` writes one organization's records to a JSON document whose select lists omit every credential (agent token hash and prefix, sealed webhook secret, sessions, password hashes, second-factor secrets) while keeping the audit chain's hashes so the file verifies on its own. `GET /api/v1/organizations/:orgSlug/export/package` adds the portable envelope: the same documents, a manifest listing each one's SHA-256 and byte length together with the organization, signer, key id, package id, creation time and the chain verdict at signing, and an HMAC-SHA256 over the canonical manifest using `EVIDENCE_SIGNING_KEY`. Issuing a package appends `export.package_signed`, written after the documents are assembled so the file never claims an event it does not contain. `npm run evidence:verify-package -- <file>` recomputes every digest and the signature with no database and no account. Neither path runs on a scheduler; deployments wire the CLI into cron or a systemd timer.
 
 ### UI surfaces
 
 - Public: landing page, `sign-in` (including a "Continue with …" button when OIDC single sign-on is configured), `sign-up`, `two-factor` challenge.
 - Account: `account/security` for TOTP enrollment and backup codes, for the account's own recent authentication activity, and for creating, listing, and revoking personal API keys with a one-time reveal.
 - Tenant workspace under `/app/:orgSlug`: dashboard, assets (list and detail), findings (list, detail, status control, JSON import), incidents (list, detail, notes, linked findings), compliance (posture overview, framework detail with attestations, control detail with evidence), agents (list with derived health, registration with one-time token reveal, detail with approval, lifecycle controls, heartbeat interval, compliance mapping, software inventory, run drill-down), identities (inventory with risk signals, registration, detail with lifecycle controls, scope approvals, one-time machine credential issue and rotation, object timeline), access reviews (campaign list with progress and overdue state, detail with per-member retain/revoke decisions and guarded finalization), advisories (import form with a sample entry, feed table, delete), audit (filters and chain verification), members, and settings (organization profile and alert destinations with a recent-delivery table).
+- Not in the console: engagements, scope entries, authorizations, execution workers and jobs, the retention policy, and reviewer assignment are API-only in this revision. The evidence package and the plain export are downloads from the API, not a console action.
 - Navigation renders only capabilities the current membership holds, but enforcement always happens on the server.
 
 ### Known limitations of this phase
 
 - Document-level security headers (CSP, HSTS in production, `X-Frame-Options`, COOP, Permissions-Policy) come from `next.config.ts` for every route. The CSP still allows inline scripts, because Next.js emits its bootstrap script without a nonce; a nonce pipeline is on the roadmap.
 - No password reset, email verification, or invitation email flow. People must register before an owner or administrator can add them.
-- No file upload. Data leaves through `npm run data:export` (a per-organization JSON file, no credentials) rather than a console download. Compliance evidence links to existing findings, incidents, and assets, or to an external reference string; documents are not stored.
-- Rate-limit windows and derived history are pruned only by the operator-run `npm run data:retention`, never by a scheduler. That purge cannot remove audit events, and deleting a finding in the console still cascades to its `ControlEvidence` rows, so evidence must be exported first if it matters.
-- The audit chain is hash-linked but not signed.
-- No in-process background worker or job queue. Agents run on their own schedule (cron, `launchd`, Task Scheduler), and the platform never initiates a scan. Offline detection and webhook delivery depend on an external scheduler calling `/api/cron/notifications`; with no scheduler configured, alerts queue but are not retried.
+- No file upload. Data leaves through `GET .../export/package` (a signed JSON package whose documents omit every credential) or `npm run data:export` for an operator without a session; neither has a console screen, and the package is not zipped. Compliance evidence links to existing findings, incidents, and assets, or to an external reference string; documents are not stored.
+- Retention is an API with no console screen and no scheduler. A purge runs only when an owner calls `POST .../settings/retention/purge` or an operator runs `npm run data:retention`; neither can remove audit events, and deleting a finding in the console still cascades to its `ControlEvidence` rows, so evidence must be exported first if it matters.
+- The audit chain is hash-linked but not signed in place. A signed package carries the chain head and an HMAC over its manifest, so a rewrite is detectable only against a package distributed beforehand, and the key is symmetric: whoever can verify can also sign.
+- No in-process background worker. Monitoring agents run on their own schedule (cron, `launchd`, Task Scheduler), and the platform never initiates a scan. Execution jobs are a database-backed queue with a registered-worker model, but no worker runtime ships: a worker is an external process that registers, heartbeats, and calls `start` and `complete`. Offline detection and webhook delivery depend on an external scheduler calling `/api/cron/notifications`; with no scheduler configured, alerts queue but are not retried.
+- Execution is limited to four declarative capabilities (`DNS_LOOKUP`, `HTTP_PROBE`, `TLS_INSPECTION`, `PORT_SCAN`): no shell, no arbitrary command, no remote response action. Scope understands domains, addresses, CIDRs and URLs, but not wildcard discovery or IPv6 beyond the same CIDR logic. DNS is compared at dispatch, at review approval and at start only, so a target that moves again mid-job is bounded by the duration limit rather than denied.
+- A worker is an API client authenticated as a member, not as a distinct worker identity: `start` and `complete` are audited against that user, and the platform trusts the worker to run only the job it started. Per-worker credentials are the next step if workers run on hosts the operator does not fully control.
+- Engagements, scope, authorizations, workers and jobs are API-only, so running an engagement needs a session or API key plus the route reference. A campaign's assigned reviewer is enforced by the API but not displayed in the console, and assigning one is a call to `PUT .../access-reviews/:reviewId/reviewer`, so the console cannot explain a refused decision.
 - Token rotation is manual and per agent: there is no rotation schedule, no overlap window (the previous token stops working immediately), and no alert when a token is about to expire.
 - Signature enforcement is opt-in per deployment. A deployment that leaves `AGENT_REQUIRE_SIGNED_RUNS` unset still accepts an unsigned but valid bearer token, so a leaked token can submit observations without knowing the signing key only until the flag is turned on.
 - The monitor's checks are a conservative baseline for Linux, macOS and Windows hosts; they are not a CIS benchmark. Windows coverage is limited to Defender state and signature age, SMBv1, RDP network-level authentication, the Guest account and update recency, and it is read through `powershell.exe` rather than a signed PowerShell script that would resist tampering.
@@ -286,11 +312,9 @@ UI hiding is not enforcement. API handlers and execution workers must apply serv
 
 ## Target domain model for later phases
 
-The Phase 1 entities (`User`, `Organization`, `Membership`, `Asset`, `Finding`, `Incident`, `IncidentNote`, `AuditEvent`) and the compliance catalog and attestation entities (`Framework`, `FrameworkControl`, `OrganizationFramework`, `OrganizationControl`, `ControlEvidence`) exist with migrations. Later phases add:
+The Phase 1 entities (`User`, `Organization`, `Membership`, `Asset`, `Finding`, `Incident`, `IncidentNote`, `AuditEvent`), the compliance catalog and attestation entities (`Framework`, `FrameworkControl`, `OrganizationFramework`, `OrganizationControl`, `ControlEvidence`), and the delivered governance and execution entities (`Engagement`, `EngagementScopeEntry`, `EngagementAuthorization`, `ExecutionWorker`, `ExecutionJob`, `ExecutionJobEvent`, `OrganizationRetentionPolicy`, `AccessReview.reviewerId`) exist with migrations. Later phases add:
 
-- `Engagement`, `ScopeEntry`, `Approval` for authorized-assessment records;
 - `Indicator`, `EvidenceArtifact` for threat intelligence and evidence;
-- `Job`, `RetentionPolicy` for the execution layer and data lifecycle;
 - `PolicyDecision` if decision logging grows beyond the current audit events.
 
 Every organization-owned record should have an explicit ownership model. Avoid trusting client-supplied organization IDs; derive or validate them from the authenticated membership.
@@ -314,6 +338,11 @@ Accepted decisions:
 - [ADR 0002](decisions/0002-identity-and-sessions.md) — identity, sessions, and second factors.
 - [ADR 0003](decisions/0003-authorization-and-audit.md) — capability authorization, tenant scoping, and tamper-evident audit.
 - [ADR 0004](decisions/0004-production-deployment.md) — single-host production deployment with a TLS proxy.
+- [ADR 0005](decisions/0005-identity-governance.md) — identity governance for human and non-human identities.
+- [ADR 0007](decisions/0007-initial-integrations.md) — initial supported integrations.
+- [ADR 0008](decisions/0008-scoped-execution-and-evidence-packages.md) — authorized execution and portable evidence packages.
+
+Proposed, not yet validated: [ADR 0006](decisions/0006-initial-customer-segment.md) — initial customer segment and problem.
 
 The following deployment and product decisions remain open:
 

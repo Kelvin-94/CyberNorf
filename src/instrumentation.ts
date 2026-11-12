@@ -14,6 +14,7 @@ export async function register(): Promise<void> {
     await import('@/server/config/fingerprint');
   const { describeSecretSources, loadFileSecrets } = await import('@/server/config/secrets-file');
   const { logger, resolveLogLevel } = await import('@/server/logging/logger');
+  const { hasEvidenceSigningKey } = await import('@/server/config');
 
   // Mounted secrets are applied before validation, so the validator sees the
   // effective configuration rather than the environment alone. A failed read is
@@ -70,6 +71,7 @@ export async function register(): Promise<void> {
       signedAgentRunsRequired: process.env.AGENT_REQUIRE_SIGNED_RUNS === 'true',
       alertSweep: Boolean(process.env.CRON_SECRET),
       evidenceUpload: Boolean(process.env.EVIDENCE_DIR),
+      evidencePackages: hasEvidenceSigningKey(),
     },
     // Variable names only, so an operator can confirm a rotation was picked up
     // without any value being written to the log.

@@ -306,46 +306,58 @@ enum NotificationStatus {
 // ---------------------------------------------------------------------------
 
 model User {
-  id                    String                  @id
-  name                  String
-  email                 String
-  emailVerified         Boolean                 @default(false)
-  image                 String?
-  createdAt             DateTime                @default(now())
-  updatedAt             DateTime                @updatedAt
-  twoFactorEnabled      Boolean?                @default(false)
-  sessions              Session[]
-  accounts              Account[]
-  twofactors            TwoFactor[]
-  memberships           Membership[]
-  createdAssets         Asset[]                 @relation("AssetCreatedBy")
-  createdFindings       Finding[]               @relation("FindingCreatedBy")
-  assignedFindings      Finding[]               @relation("FindingAssignedTo")
-  createdIncidents      Incident[]              @relation("IncidentCreatedBy")
-  assignedIncidents     Incident[]              @relation("IncidentAssignedTo")
-  incidentNotes         IncidentNote[]
-  auditEvents           AuditEvent[]
-  authEvents            AuthEvent[]
-  ownedControls         OrganizationControl[]   @relation("ControlOwner")
-  updatedControls       OrganizationControl[]   @relation("ControlUpdatedBy")
-  controlEvidence       ControlEvidence[]       @relation("EvidenceCreatedBy")
-  adoptedFrameworks     OrganizationFramework[] @relation("FrameworkAdoptedBy")
-  createdAgents         Agent[]                 @relation("AgentCreatedBy")
-  approvedAgents        Agent[]                 @relation("AgentApprovedBy")
-  createdCheckMaps      CheckControlMap[]       @relation("CheckMapCreatedBy")
-  createdChannels       NotificationChannel[]   @relation("NotificationChannelCreatedBy")
-  createdAdvisories     Advisory[]              @relation("AdvisoryCreatedBy")
-  apiKeys               UserApiKey[]
-  createdIdentities     Identity[]              @relation("IdentityCreatedBy")
-  ownedIdentities       Identity[]              @relation("IdentityOwner")
-  linkedIdentities      Identity[]              @relation("IdentityLinkedUser")
-  approvedIdentities    Identity[]              @relation("IdentityApprovedBy")
-  identityEvents        IdentityEvent[]         @relation("IdentityEventActor")
-  identityCredentials   IdentityCredential[]    @relation("IdentityCredentialCreatedBy")
-  createdAccessReviews  AccessReview[]          @relation("AccessReviewCreatedBy")
-  accessReviewDecisions AccessReviewItem[]      @relation("AccessReviewDecidedBy")
-  createdIndicators     Indicator[]             @relation("IndicatorCreatedBy")
-  createdIndicatorLinks IndicatorLink[]         @relation("IndicatorLinkCreatedBy")
+  id                      String                        @id
+  name                    String
+  email                   String
+  emailVerified           Boolean                       @default(false)
+  image                   String?
+  createdAt               DateTime                      @default(now())
+  updatedAt               DateTime                      @updatedAt
+  twoFactorEnabled        Boolean?                      @default(false)
+  sessions                Session[]
+  accounts                Account[]
+  twofactors              TwoFactor[]
+  memberships             Membership[]
+  createdAssets           Asset[]                       @relation("AssetCreatedBy")
+  createdFindings         Finding[]                     @relation("FindingCreatedBy")
+  assignedFindings        Finding[]                     @relation("FindingAssignedTo")
+  createdIncidents        Incident[]                    @relation("IncidentCreatedBy")
+  assignedIncidents       Incident[]                    @relation("IncidentAssignedTo")
+  incidentNotes           IncidentNote[]
+  auditEvents             AuditEvent[]
+  authEvents              AuthEvent[]
+  ownedControls           OrganizationControl[]         @relation("ControlOwner")
+  updatedControls         OrganizationControl[]         @relation("ControlUpdatedBy")
+  controlEvidence         ControlEvidence[]             @relation("EvidenceCreatedBy")
+  adoptedFrameworks       OrganizationFramework[]       @relation("FrameworkAdoptedBy")
+  createdAgents           Agent[]                       @relation("AgentCreatedBy")
+  approvedAgents          Agent[]                       @relation("AgentApprovedBy")
+  createdCheckMaps        CheckControlMap[]             @relation("CheckMapCreatedBy")
+  createdChannels         NotificationChannel[]         @relation("NotificationChannelCreatedBy")
+  createdAdvisories       Advisory[]                    @relation("AdvisoryCreatedBy")
+  apiKeys                 UserApiKey[]
+  createdIdentities       Identity[]                    @relation("IdentityCreatedBy")
+  ownedIdentities         Identity[]                    @relation("IdentityOwner")
+  linkedIdentities        Identity[]                    @relation("IdentityLinkedUser")
+  approvedIdentities      Identity[]                    @relation("IdentityApprovedBy")
+  identityEvents          IdentityEvent[]               @relation("IdentityEventActor")
+  identityCredentials     IdentityCredential[]          @relation("IdentityCredentialCreatedBy")
+  createdAccessReviews    AccessReview[]                @relation("AccessReviewCreatedBy")
+  accessReviewDecisions   AccessReviewItem[]            @relation("AccessReviewDecidedBy")
+  createdIndicators       Indicator[]                   @relation("IndicatorCreatedBy")
+  createdIndicatorLinks   IndicatorLink[]               @relation("IndicatorLinkCreatedBy")
+  createdEngagements      Engagement[]                  @relation("EngagementCreatedBy")
+  createdScopeEntries     EngagementScopeEntry[]        @relation("ScopeEntryCreatedBy")
+  requestedAuthorizations EngagementAuthorization[]     @relation("AuthorizationRequestedBy")
+  decidedAuthorizations   EngagementAuthorization[]     @relation("AuthorizationDecidedBy")
+  revokedAuthorizations   EngagementAuthorization[]     @relation("AuthorizationRevokedBy")
+  createdExecutionWorkers ExecutionWorker[]             @relation("ExecutionWorkerCreatedBy")
+  requestedExecutionJobs  ExecutionJob[]                @relation("ExecutionJobRequestedBy")
+  reviewedExecutionJobs   ExecutionJob[]                @relation("ExecutionJobReviewedBy")
+  cancelledExecutionJobs  ExecutionJob[]                @relation("ExecutionJobCancelledBy")
+  executionEvents         ExecutionJobEvent[]           @relation("ExecutionEventActor")
+  retentionPolicies       OrganizationRetentionPolicy[] @relation("RetentionPolicyUpdatedBy")
+  reviewedAccessReviews   AccessReview[]                @relation("AccessReviewReviewer")
 
   @@unique([email])
   @@map("user")
@@ -428,13 +440,13 @@ model RateLimit {
 // ---------------------------------------------------------------------------
 
 model Organization {
-  id                   String                  @id @default(cuid())
+  id                   String                       @id @default(cuid())
   name                 String
-  slug                 String                  @unique
+  slug                 String                       @unique
   description          String?
-  tier                 SubscriptionTier        @default(PROFESSIONAL)
-  createdAt            DateTime                @default(now())
-  updatedAt            DateTime                @updatedAt
+  tier                 SubscriptionTier             @default(PROFESSIONAL)
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime                     @updatedAt
   memberships          Membership[]
   assets               Asset[]
   findings             Finding[]
@@ -459,6 +471,13 @@ model Organization {
   indicators           Indicator[]
   indicatorLinks       IndicatorLink[]
   quota                OrganizationQuota?
+  engagements          Engagement[]
+  engagementScope      EngagementScopeEntry[]
+  authorizations       EngagementAuthorization[]
+  executionWorkers     ExecutionWorker[]
+  executionJobs        ExecutionJob[]
+  executionEvents      ExecutionJobEvent[]
+  retentionPolicy      OrganizationRetentionPolicy?
 
   @@map("organizations")
 }
@@ -858,12 +877,14 @@ model AccessReview {
   status         AccessReviewStatus @default(ACTIVE)
   dueAt          DateTime
   createdById    String
+  reviewerId     String?
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
   completedAt    DateTime?
   cancelledAt    DateTime?
   organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdBy      User               @relation("AccessReviewCreatedBy", fields: [createdById], references: [id])
+  reviewer       User?              @relation("AccessReviewReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
   items          AccessReviewItem[]
 
   @@index([organizationId, status])
@@ -1306,4 +1327,285 @@ model OrganizationQuota {
   organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@map("organization_quotas")
+}
+
+// ---------------------------------------------------------------------------
+// Engagements, authorized testing scope and controlled execution (Phase 4)
+// ---------------------------------------------------------------------------
+
+/// Lifecycle of an authorized testing engagement. Only an ACTIVE engagement can
+/// dispatch a job; DRAFT exists so scope and authorization can be prepared
+/// before anything is executable, and CLOSED is terminal.
+enum EngagementStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+/// An inclusion grants coverage; an exclusion removes it even when a broader
+/// inclusion also matches. Exclusions are evaluated first.
+enum ScopeEntryKind {
+  INCLUDE
+  EXCLUDE
+}
+
+/// How a scope value is interpreted. DOMAIN covers the exact host and its
+/// subdomains; URL pins scheme, host and port; CIDR covers address ranges.
+enum ScopeTargetType {
+  DOMAIN
+  IP_ADDRESS
+  CIDR
+  URL
+}
+
+enum AuthorizationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REVOKED
+}
+
+/// Capabilities a worker may execute. Each maps to a fixed risk level in
+/// src/server/domain/execution.ts; a job cannot lower its own risk.
+enum ExecutionCapability {
+  DNS_LOOKUP
+  HTTP_PROBE
+  TLS_INSPECTION
+  PORT_SCAN
+}
+
+enum ExecutionRisk {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+/// PENDING_REVIEW exists so a high-risk request is durable before a human sees
+/// it. DENIED is the terminal record of a request that never ran.
+enum ExecutionJobStatus {
+  PENDING_REVIEW
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  DENIED
+}
+
+enum ExecutionReviewStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ExecutionWorkerStatus {
+  ACTIVE
+  SUSPENDED
+  RETIRED
+}
+
+enum ExecutionEventType {
+  REQUESTED
+  REVIEW_REQUESTED
+  REVIEW_APPROVED
+  REVIEW_REJECTED
+  DISPATCH_DENIED
+  EXECUTION_DENIED
+  QUEUED
+  STARTED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+/// A bounded period of testing against an explicitly listed set of targets.
+/// The engagement is the unit an authorizer approves: it carries the window,
+/// the scope entries, and the authorization records that allow dispatch.
+model Engagement {
+  id             String                    @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  status         EngagementStatus          @default(DRAFT)
+  startsAt       DateTime
+  endsAt         DateTime
+  closedAt       DateTime?
+  createdById    String
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+  organization   Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      User                      @relation("EngagementCreatedBy", fields: [createdById], references: [id])
+  scopeEntries   EngagementScopeEntry[]
+  authorizations EngagementAuthorization[]
+  jobs           ExecutionJob[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, status, endsAt])
+  @@map("engagements")
+}
+
+/// One target rule. The value is normalized on write (lowercase host, canonical
+/// CIDR, URL with default port) so matching never depends on how it was typed.
+model EngagementScopeEntry {
+  id             String          @id @default(cuid())
+  organizationId String
+  engagementId   String
+  kind           ScopeEntryKind
+  targetType     ScopeTargetType
+  value          String
+  note           String?
+  createdById    String
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  engagement     Engagement      @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  createdBy      User            @relation("ScopeEntryCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([engagementId, kind, targetType, value])
+  @@index([organizationId])
+  @@map("engagement_scope_entries")
+}
+
+/// The authorization to test. `expiresAt` is mandatory and is checked on every
+/// dispatch and every execution start; an engagement window that outlives the
+/// authorization cannot extend it. At most one APPROVED record per engagement
+/// is enforced by the service inside a row lock.
+model EngagementAuthorization {
+  id             String              @id @default(cuid())
+  organizationId String
+  engagementId   String
+  status         AuthorizationStatus @default(PENDING)
+  reference      String?
+  conditions     String?
+  requestedById  String
+  decidedById    String?
+  decidedAt      DateTime?
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  revokedById    String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  engagement     Engagement          @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  requestedBy    User                @relation("AuthorizationRequestedBy", fields: [requestedById], references: [id])
+  decidedBy      User?               @relation("AuthorizationDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  revokedBy      User?               @relation("AuthorizationRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+  jobs           ExecutionJob[]
+
+  @@index([engagementId, status])
+  @@index([organizationId, expiresAt])
+  @@map("engagement_authorizations")
+}
+
+/// An execution worker registered by the organization. A worker is only
+/// eligible when it reports isolation, has a non-empty egress allowlist, and
+/// has a recent heartbeat. The allowlist is enforced at dispatch: a worker that
+/// cannot reach the target is not a candidate.
+model ExecutionWorker {
+  id              String                @id @default(cuid())
+  organizationId  String
+  name            String
+  status          ExecutionWorkerStatus @default(ACTIVE)
+  isolated        Boolean               @default(false)
+  egressAllowlist String[]
+  attestationRef  String?
+  lastHeartbeatAt DateTime?
+  createdById     String
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  organization    Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy       User                  @relation("ExecutionWorkerCreatedBy", fields: [createdById], references: [id])
+  jobs            ExecutionJob[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, status, lastHeartbeatAt])
+  @@map("execution_workers")
+}
+
+/// A request to run one capability against one target. `approvedAddresses` is
+/// the DNS answer observed at dispatch; the start path resolves again and
+/// refuses to run when the answer changed, which is how a DNS rebind between
+/// approval and execution is caught.
+model ExecutionJob {
+  id                String                  @id @default(cuid())
+  organizationId    String
+  engagementId      String
+  authorizationId   String
+  workerId          String?
+  capability        ExecutionCapability
+  targetType        ScopeTargetType
+  targetValue       String
+  requestedById     String
+  risk              ExecutionRisk
+  reviewStatus      ExecutionReviewStatus   @default(NOT_REQUIRED)
+  reviewedById      String?
+  reviewedAt        DateTime?
+  status            ExecutionJobStatus      @default(QUEUED)
+  approvedAddresses String[]
+  limits            Json
+  denialReason      String?
+  cancelRequestedAt DateTime?
+  cancelledById     String?
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  organization      Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  engagement        Engagement              @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  authorization     EngagementAuthorization @relation(fields: [authorizationId], references: [id], onDelete: Restrict)
+  worker            ExecutionWorker?        @relation(fields: [workerId], references: [id], onDelete: SetNull)
+  requestedBy       User                    @relation("ExecutionJobRequestedBy", fields: [requestedById], references: [id])
+  reviewedBy        User?                   @relation("ExecutionJobReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  cancelledBy       User?                   @relation("ExecutionJobCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
+  events            ExecutionJobEvent[]
+
+  @@index([organizationId, status, createdAt])
+  @@index([engagementId, status])
+  @@index([workerId, status])
+  @@map("execution_jobs")
+}
+
+/// Append-only job timeline. It records denials as first-class events, so an
+/// out-of-scope request leaves the same durable trace as one that ran.
+model ExecutionJobEvent {
+  id             String             @id @default(cuid())
+  organizationId String
+  jobId          String
+  type           ExecutionEventType
+  message        String
+  metadata       Json?
+  actorId        String?
+  createdAt      DateTime           @default(now())
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job            ExecutionJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  actor          User?              @relation("ExecutionEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([jobId, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("execution_job_events")
+}
+
+// ---------------------------------------------------------------------------
+// Tenant-configurable retention (Phase 5)
+// ---------------------------------------------------------------------------
+
+/// Per-tenant retention for derived operational history. Business records
+/// (findings, incidents, assets, compliance evidence) and the append-only audit
+/// chain are deliberately absent: neither is removed by a timer.
+model OrganizationRetentionPolicy {
+  id                    String       @id @default(cuid())
+  organizationId        String       @unique
+  agentRunDays          Int          @default(90)
+  notificationEventDays Int          @default(90)
+  softwareItemDays      Int          @default(180)
+  executionJobDays      Int          @default(180)
+  updatedById           String
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  updatedBy             User         @relation("RetentionPolicyUpdatedBy", fields: [updatedById], references: [id])
+
+  @@map("organization_retention_policies")
 }

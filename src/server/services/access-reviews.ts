@@ -2,7 +2,7 @@ import { Prisma } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
 import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
 import type { TenantContext } from '@/server/authz/context';
-import { conflict, forbidden, notFound } from '@/server/errors';
+import { badRequest, conflict, forbidden, notFound } from '@/server/errors';
 import type {
   AccessReviewListQuery,
   DecideAccessReviewItemInput,
@@ -25,6 +25,7 @@ const REVIEW_LOCK_NAMESPACE = 0x43595256; // "CYRV"
 
 const REVIEW_INCLUDE = {
   createdBy: { select: { id: true, name: true, email: true } },
+  reviewer: { select: { id: true, name: true, email: true } },
   items: {
     orderBy: [{ decision: 'asc' }, { roleAtReview: 'desc' }, { userName: 'asc' }],
     select: {
@@ -81,6 +82,7 @@ export interface AccessReviewSummary {
   completedAt: string | null;
   cancelledAt: string | null;
   createdBy: { id: string; name: string; email: string };
+  reviewer: { id: string; name: string; email: string } | null;
   progress: ReviewProgress;
   overdue: boolean;
 }
@@ -132,6 +134,7 @@ function toSummary(
     completedAt: row.completedAt?.toISOString() ?? null,
     cancelledAt: row.cancelledAt?.toISOString() ?? null,
     createdBy: row.createdBy,
+    reviewer: row.reviewer,
     progress: progressFromItems(row.items),
     overdue: row.status === 'ACTIVE' && row.dueAt.getTime() < now.getTime(),
   };
@@ -207,6 +210,7 @@ export async function listAccessReviews(
       where,
       include: {
         createdBy: { select: { id: true, name: true, email: true } },
+        reviewer: { select: { id: true, name: true, email: true } },
         items: { select: { decision: true } },
       },
       orderBy: [{ status: 'asc' }, { dueAt: 'asc' }, { createdAt: 'desc' }],
@@ -232,11 +236,47 @@ export async function getAccessReviewDetail(
   return toDetail(row, new Date());
 }
 
+/**
+ * An assigned reviewer must be able to decide items (ADMIN or OWNER) and must
+ * not be the person who opened the campaign. Without the second rule a single
+ * administrator could open a review, assign themselves, and recertify their own
+ * access — the exact thing the campaign exists to prevent.
+ */
+async function assertReviewerEligible(
+  db: Db,
+  organizationId: string,
+  reviewerId: string,
+  createdById: string,
+): Promise<void> {
+  if (reviewerId === createdById) {
+    throw badRequest('The reviewer must be someone other than the person who opened the review.');
+  }
+  const membership = await db.membership.findFirst({
+    where: { organizationId, userId: reviewerId, status: 'ACTIVE' },
+    select: { role: true },
+  });
+  if (!membership) {
+    throw notFound('The assigned reviewer is not an active member of this organization.');
+  }
+  if (membership.role !== 'OWNER' && membership.role !== 'ADMIN') {
+    throw badRequest('The assigned reviewer must be an owner or an administrator.');
+  }
+}
+
 export async function createAccessReview(
   ctx: TenantContext,
-  input: { title: string; description?: string | null | undefined; dueAt: Date },
+  input: {
+    title: string;
+    description?: string | null | undefined;
+    dueAt: Date;
+    reviewerId?: string | null | undefined;
+  },
 ): Promise<AccessReviewDetail> {
   const organizationId = ctx.organization.id;
+
+  if (input.reviewerId) {
+    await assertReviewerEligible(prisma, organizationId, input.reviewerId, ctx.user.id);
+  }
   const memberships = await prisma.membership.findMany({
     where: { organizationId, status: 'ACTIVE' },
     select: {
@@ -261,6 +301,7 @@ export async function createAccessReview(
         title: input.title,
         dueAt: input.dueAt,
         createdById: ctx.user.id,
+        ...(input.reviewerId ? { reviewerId: input.reviewerId } : {}),
         ...(input.description !== undefined ? { description: input.description } : {}),
         items: {
           create: memberships.map((membership) => ({
@@ -288,11 +329,34 @@ export async function createAccessReview(
       metadata: {
         dueAt: input.dueAt.toISOString(),
         itemCount: memberships.length,
+        reviewerId: input.reviewerId ?? null,
       },
       ipAddress: ctx.meta.ipAddress,
       userAgent: ctx.meta.userAgent,
       requestId: ctx.meta.requestId,
     });
+
+    // Assigning at creation is the same control as assigning later, so it gets
+    // its own row rather than living only inside the creation metadata.
+    if (input.reviewerId) {
+      await appendAuditEvent(tx, {
+        organizationId,
+        actorType: 'USER',
+        actorId: ctx.user.id,
+        action: AuditActions.ACCESS_REVIEW_REVIEWER_ASSIGNED,
+        outcome: 'SUCCESS',
+        targetType: 'access_review',
+        targetId: created.id,
+        summary: `Assigned a reviewer to access review "${input.title}"`,
+        metadata: {
+          previousReviewerId: null,
+          reviewerId: input.reviewerId,
+        },
+        ipAddress: ctx.meta.ipAddress,
+        userAgent: ctx.meta.userAgent,
+        requestId: ctx.meta.requestId,
+      });
+    }
 
     return created;
   });
@@ -300,6 +364,67 @@ export async function createAccessReview(
   const detail = await loadReview(prisma, organizationId, review.id);
   if (!detail) {
     throw new Error('Access review disappeared immediately after creation.');
+  }
+  return toDetail(detail, now);
+}
+
+/**
+ * Assigns (or clears) the reviewer for an open campaign. The reviewer is the
+ * only person who can record decisions from that point on, so reassignment is
+ * audited with the previous and new reviewer.
+ */
+export async function assignAccessReviewReviewer(
+  ctx: TenantContext,
+  reviewId: string,
+  reviewerId: string | null,
+): Promise<AccessReviewDetail> {
+  const organizationId = ctx.organization.id;
+  const now = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    const review = await tx.accessReview.findFirst({
+      where: { id: reviewId, organizationId },
+      select: { id: true, status: true, title: true, createdById: true, reviewerId: true },
+    });
+    if (!review) {
+      throw notFound('Access review not found.');
+    }
+    if (review.status !== 'ACTIVE') {
+      throw conflict('A closed review cannot be reassigned.');
+    }
+    if (reviewerId) {
+      await assertReviewerEligible(tx, organizationId, reviewerId, review.createdById);
+    }
+
+    await tx.accessReview.update({
+      where: { id: review.id },
+      data: { reviewerId },
+    });
+
+    await appendAuditEvent(tx, {
+      organizationId,
+      actorType: 'USER',
+      actorId: ctx.user.id,
+      action: AuditActions.ACCESS_REVIEW_REVIEWER_ASSIGNED,
+      outcome: 'SUCCESS',
+      targetType: 'access_review',
+      targetId: review.id,
+      summary: reviewerId
+        ? `Assigned a reviewer to access review "${review.title}"`
+        : `Cleared the reviewer assignment on access review "${review.title}"`,
+      metadata: {
+        previousReviewerId: review.reviewerId,
+        reviewerId,
+      },
+      ipAddress: ctx.meta.ipAddress,
+      userAgent: ctx.meta.userAgent,
+      requestId: ctx.meta.requestId,
+    });
+  });
+
+  const detail = await loadReview(prisma, organizationId, reviewId);
+  if (!detail) {
+    throw new Error('Access review disappeared while being reassigned.');
   }
   return toDetail(detail, now);
 }
@@ -316,13 +441,18 @@ export async function decideAccessReviewItem(
   const result = await prisma.$transaction(async (tx) => {
     const review = await tx.accessReview.findFirst({
       where: { id: reviewId, organizationId },
-      select: { id: true, status: true, title: true },
+      select: { id: true, status: true, title: true, reviewerId: true },
     });
     if (!review) {
       throw notFound('Access review not found.');
     }
     if (review.status !== 'ACTIVE') {
       throw conflict('This review is closed and can no longer record decisions.');
+    }
+    // An assignment is an access control, not a label: once a reviewer is set,
+    // another administrator cannot record decisions in their place.
+    if (review.reviewerId !== null && review.reviewerId !== ctx.user.id) {
+      throw forbidden('This access review is assigned to another reviewer.');
     }
 
     const item = await tx.accessReviewItem.findFirst({
@@ -408,6 +538,13 @@ export async function finalizeAccessReview(
     }
     if (review.status !== 'ACTIVE') {
       throw conflict('This review is already closed.');
+    }
+    if (
+      review.reviewerId !== null &&
+      review.reviewerId !== ctx.user.id &&
+      review.createdById !== ctx.user.id
+    ) {
+      throw forbidden('This access review is assigned to another reviewer.');
     }
 
     const pending = review.items.filter((item) => item.decision === 'PENDING');
