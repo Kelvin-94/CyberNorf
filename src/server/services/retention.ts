@@ -353,6 +353,48 @@ export async function planRetentionPolicy(
 }
 
 /**
+ * The deletion itself, shared by the operator purge and the scheduled sweep so
+ * both enforce the same predicates. Running jobs are never deleted: a worker
+ * still holds a lease, and the job is the operator's only handle to stop it.
+ */
+async function deletePastWindow(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  cutoffs: Record<RetentionCategory, Date>,
+): Promise<RetentionPolicyPlan['counts']> {
+  const removedRuns = await tx.agentRun.deleteMany({
+    where: { organizationId, startedAt: { lt: cutoffs.agentRunDays } },
+  });
+  const removedNotifications = await tx.notificationEvent.deleteMany({
+    where: {
+      organizationId,
+      status: { in: [...TERMINAL_NOTIFICATION_STATUSES] },
+      createdAt: { lt: cutoffs.notificationEventDays },
+    },
+  });
+  const removedItems = await tx.softwareItem.deleteMany({
+    where: { organizationId, lastSeenAt: { lt: cutoffs.softwareItemDays } },
+  });
+  const removedJobs = await tx.executionJob.deleteMany({
+    where: {
+      organizationId,
+      status: { in: [...TERMINAL_JOB_STATUSES] },
+      OR: [
+        { finishedAt: { lt: cutoffs.executionJobDays } },
+        { finishedAt: null, createdAt: { lt: cutoffs.executionJobDays } },
+      ],
+    },
+  });
+
+  return {
+    runs: removedRuns.count,
+    notificationEvents: removedNotifications.count,
+    softwareItems: removedItems.count,
+    executionJobs: removedJobs.count,
+  };
+}
+
+/**
  * Deletes the categories that are past their window. Owner-only at the route
  * and here: an administrator can change the policy, but only an owner can make
  * the platform forget records, which is the irreversible half of retention.
@@ -378,40 +420,9 @@ export async function purgeRetentionPolicy(
   const organizationId = ctx.organization.id;
 
   return prisma.$transaction(async (tx) => {
-    const removedRuns = await tx.agentRun.deleteMany({
-      where: { organizationId, startedAt: { lt: cutoffs.agentRunDays } },
-    });
-    const removedNotifications = await tx.notificationEvent.deleteMany({
-      where: {
-        organizationId,
-        status: { in: [...TERMINAL_NOTIFICATION_STATUSES] },
-        createdAt: { lt: cutoffs.notificationEventDays },
-      },
-    });
-    const removedItems = await tx.softwareItem.deleteMany({
-      where: { organizationId, lastSeenAt: { lt: cutoffs.softwareItemDays } },
-    });
-    // A running job is never deleted: its worker still holds a lease and the
-    // job is the only handle the operator has to stop it.
-    const removedJobs = await tx.executionJob.deleteMany({
-      where: {
-        organizationId,
-        status: { in: [...TERMINAL_JOB_STATUSES] },
-        OR: [
-          { finishedAt: { lt: cutoffs.executionJobDays } },
-          { finishedAt: null, createdAt: { lt: cutoffs.executionJobDays } },
-        ],
-      },
-    });
-
     // The delete counts are authoritative; the preview may have raced with new
     // records and is only shown to the operator before they confirm.
-    const counts = {
-      runs: removedRuns.count,
-      notificationEvents: removedNotifications.count,
-      softwareItems: removedItems.count,
-      executionJobs: removedJobs.count,
-    };
+    const counts = await deletePastWindow(tx, organizationId, cutoffs);
 
     await appendAuditEvent(tx, {
       organizationId,
@@ -434,4 +445,95 @@ export async function purgeRetentionPolicy(
 
     return { ...plan, counts };
   });
+}
+
+export interface RetentionEnforcementResult {
+  organizationsChecked: number;
+  organizationsPurged: number;
+  counts: RetentionPolicyPlan['counts'];
+  errors: Array<{ organizationId: string; message: string }>;
+}
+
+/**
+ * Applies the stored policy for every organization that configured one.
+ *
+ * Only organizations with an explicit policy are touched. A tenant that never
+ * opened the retention screen keeps its history, because deleting records on a
+ * default nobody confirmed is not something a timer should decide. Each tenant
+ * is purged in its own transaction with a SYSTEM audit entry, so one failure
+ * cannot roll back another tenant's sweep, and the actor in the chain is the
+ * schedule rather than a person.
+ */
+export async function enforceRetentionSchedules(
+  options: { now?: Date } = {},
+): Promise<RetentionEnforcementResult> {
+  const now = options.now ?? new Date();
+  const policies = await prisma.organizationRetentionPolicy.findMany({
+    select: {
+      organizationId: true,
+      agentRunDays: true,
+      notificationEventDays: true,
+      softwareItemDays: true,
+      executionJobDays: true,
+    },
+  });
+
+  const result: RetentionEnforcementResult = {
+    organizationsChecked: policies.length,
+    organizationsPurged: 0,
+    counts: { runs: 0, notificationEvents: 0, softwareItems: 0, executionJobs: 0 },
+    errors: [],
+  };
+
+  for (const stored of policies) {
+    const policy: RetentionPolicy = {
+      agentRunDays: stored.agentRunDays,
+      notificationEventDays: stored.notificationEventDays,
+      softwareItemDays: stored.softwareItemDays,
+      executionJobDays: stored.executionJobDays,
+    };
+    try {
+      const cutoffs = policyCutoffs(policy, now);
+      const removed = await prisma.$transaction(async (tx) => {
+        const counts = await deletePastWindow(tx, stored.organizationId, cutoffs);
+        if (Object.values(counts).some((count) => count > 0)) {
+          await appendAuditEvent(tx, {
+            organizationId: stored.organizationId,
+            actorType: 'SYSTEM',
+            action: AuditActions.RETENTION_PURGED,
+            outcome: 'SUCCESS',
+            targetType: 'organization',
+            targetId: stored.organizationId,
+            summary: `Scheduled retention purged ${counts.runs} runs, ${counts.notificationEvents} alert deliveries, ${counts.softwareItems} package snapshots and ${counts.executionJobs} execution jobs`,
+            metadata: {
+              policy,
+              cutoffs: {
+                agentRunDays: cutoffs.agentRunDays.toISOString(),
+                notificationEventDays: cutoffs.notificationEventDays.toISOString(),
+                softwareItemDays: cutoffs.softwareItemDays.toISOString(),
+                executionJobDays: cutoffs.executionJobDays.toISOString(),
+              },
+              counts,
+              trigger: 'schedule',
+            } as unknown as Prisma.InputJsonValue,
+          });
+        }
+        return counts;
+      });
+      if (Object.values(removed).some((count) => count > 0)) {
+        result.organizationsPurged += 1;
+        result.counts.runs += removed.runs;
+        result.counts.notificationEvents += removed.notificationEvents;
+        result.counts.softwareItems += removed.softwareItems;
+        result.counts.executionJobs += removed.executionJobs;
+      }
+    } catch (error) {
+      result.errors.push({
+        organizationId: stored.organizationId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return result;
 }

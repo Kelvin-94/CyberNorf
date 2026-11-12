@@ -5,6 +5,7 @@ import { verifyAuditChain } from '@/server/audit/audit';
 import {
   DEFAULT_RETENTION_POLICY,
   RETENTION_POLICY_BOUNDS,
+  enforceRetentionSchedules,
   getRetentionPolicy,
   planRetentionPolicy,
   purgeRetentionPolicy,
@@ -187,6 +188,81 @@ test('the preview counts only terminal jobs past the window and purge keeps live
   assert.ok(audit);
   assert.match(audit.summary ?? '', /1 execution jobs/);
   assert.equal((await verifyAuditChain(organization.id)).valid, true);
+});
+
+test('the scheduled sweep enforces saved policies only and audits itself', async () => {
+  const configured = await createTenant({ role: 'OWNER', twoFactorEnabled: true });
+  const untouched = await createTenant({ role: 'OWNER', twoFactorEnabled: true });
+
+  const seedRun = async (tenant: typeof configured, name: string): Promise<void> => {
+    const agent = await prisma.agent.create({
+      data: {
+        organizationId: tenant.organization.id,
+        name,
+        source: 'BUILTIN',
+        status: 'ACTIVE',
+        createdById: tenant.user.id,
+      },
+      select: { id: true },
+    });
+    await prisma.agentRun.create({
+      data: {
+        organizationId: tenant.organization.id,
+        agentId: agent.id,
+        status: 'COMPLETED',
+        startedAt: daysAgo(120),
+        finishedAt: daysAgo(120),
+        checks: [],
+        checkCount: 1,
+        passCount: 1,
+      },
+    });
+  };
+
+  await seedRun(configured, 'sweep-configured');
+  await seedRun(untouched, 'sweep-untouched');
+
+  await updateRetentionPolicy(configured.ctx, {
+    ...DEFAULT_RETENTION_POLICY,
+    agentRunDays: 30,
+  });
+
+  const first = await enforceRetentionSchedules();
+  assert.equal(first.errors.length, 0);
+  assert.ok(first.organizationsChecked >= 1);
+  assert.equal(first.counts.runs, 1, 'only the configured tenant had a run past its window');
+
+  assert.equal(
+    await prisma.agentRun.count({ where: { organizationId: configured.organization.id } }),
+    0,
+  );
+  assert.equal(
+    await prisma.agentRun.count({ where: { organizationId: untouched.organization.id } }),
+    1,
+    'a tenant that never saved a policy keeps its history',
+  );
+
+  const audit = await prisma.auditEvent.findFirst({
+    where: { organizationId: configured.organization.id, action: 'retention.purged' },
+    orderBy: { sequence: 'desc' },
+  });
+  assert.ok(audit);
+  assert.equal(audit.actorType, 'SYSTEM');
+  assert.equal(audit.actorId, null);
+  assert.equal((audit.metadata as { trigger?: string }).trigger, 'schedule');
+  assert.equal((await verifyAuditChain(configured.organization.id)).valid, true);
+
+  // Nothing is due on the next pass, and silence is the correct outcome: no
+  // second audit entry to page anyone about.
+  const eventsBefore = await prisma.auditEvent.count({
+    where: { organizationId: configured.organization.id },
+  });
+  const second = await enforceRetentionSchedules();
+  assert.equal(second.counts.runs, 0);
+  assert.equal(
+    await prisma.auditEvent.count({ where: { organizationId: configured.organization.id } }),
+    eventsBefore,
+  );
 });
 
 test('an administrator can change the policy but cannot purge history', async () => {

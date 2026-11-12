@@ -451,3 +451,48 @@ test('cleanup closes reviews and queues that can no longer progress', async () =
   assert.equal(job.denialReason, 'lease_expired');
   assert.equal((await verifyAuditChain(tenant.organization.id)).valid, true);
 });
+
+test('the active-job cap refuses a dispatch and frees the slot when a job ends', async () => {
+  const tenant = await createTenant({ role: 'OWNER' });
+  const engagementId = await activeEngagement(tenant.ctx);
+  await approvedAuthorization(tenant.ctx, engagementId);
+  await worker(tenant.ctx, ['203.0.113.0/24']);
+
+  const previous = process.env.EXECUTION_MAX_ACTIVE_JOBS;
+  process.env.EXECUTION_MAX_ACTIVE_JOBS = '2';
+  try {
+    const first = await queuedJob(tenant.ctx, engagementId);
+    await queuedJob(tenant.ctx, engagementId);
+
+    // The third request is refused outright: no job row, no event, no audit
+    // entry for a request the control plane never accepted.
+    const before = await prisma.executionJob.count({
+      where: { organizationId: tenant.organization.id },
+    });
+    await expectAppError(
+      requestExecutionJob(
+        tenant.ctx,
+        engagementId,
+        { capability: 'HTTP_PROBE', targetType: 'DOMAIN', targetValue: 'example.com' },
+        { resolve: resolveTo('203.0.113.10') },
+      ),
+      { statusCode: 429, code: 'RATE_LIMITED' },
+    );
+    assert.equal(
+      await prisma.executionJob.count({ where: { organizationId: tenant.organization.id } }),
+      before,
+    );
+
+    // A cancelled job no longer holds a slot, so the next dispatch is accepted.
+    await cancelExecutionJob(tenant.ctx, first, { reason: 'operator freed a slot' }, {
+      resolve: resolveTo('203.0.113.10'),
+    });
+    await queuedJob(tenant.ctx, engagementId);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.EXECUTION_MAX_ACTIVE_JOBS;
+    } else {
+      process.env.EXECUTION_MAX_ACTIVE_JOBS = previous;
+    }
+  }
+});

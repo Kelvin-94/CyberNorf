@@ -4,6 +4,7 @@ import {
   type AgentSource,
   type AgentStatus,
   type AssetCriticality,
+  type SubscriptionTier,
 } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
 import { AuditActions, appendAuditEvent } from '@/server/audit/audit';
@@ -22,7 +23,7 @@ import {
 import { deriveAgentHealth, type AgentHealth } from '@/server/domain/notifications';
 import { badRequest, conflict, forbidden, notFound, unauthenticated } from '@/server/errors';
 import { attachMappedEvidence, loadMappedControls } from '@/server/services/check-maps';
-import { assertQuotaAvailable } from '@/server/services/quotas';
+import { assertQuotaAvailable, remainingQuota } from '@/server/services/quotas';
 import { agentFingerprint, isUniqueConstraintError, riskFields } from '@/server/services/shared';
 import { syncInventoryAndMatch } from '@/server/services/software';
 import type {
@@ -88,6 +89,8 @@ export interface AgentRunView {
 export interface AgentPrincipal {
   id: string;
   organizationId: string;
+  /** Tenant tier, needed to price the run's finding budget against its quota. */
+  organizationTier: SubscriptionTier;
   name: string;
   source: AgentSource;
   scopes: string[];
@@ -739,6 +742,7 @@ export async function authenticateAgentToken(token: string): Promise<AgentPrinci
       scopes: true,
       tokenExpiresAt: true,
       createdById: true,
+      organization: { select: { tier: true } },
     },
   });
 
@@ -752,6 +756,7 @@ export async function authenticateAgentToken(token: string): Promise<AgentPrinci
   return {
     id: agent.id,
     organizationId: agent.organizationId,
+    organizationTier: agent.organization.tier,
     name: agent.name,
     source: agent.source,
     scopes: agent.scopes,
@@ -765,6 +770,11 @@ export interface RecordRunResult {
   findingsCreated: number;
   findingsRefreshed: number;
   findingsSuppressed: number;
+  /**
+   * New findings the run would have raised but did not, because the tenant is at
+   * its finding quota. The run still succeeds and its checks stay recorded.
+   */
+  findingsSkippedForQuota: number;
   /** Evidence items filed against mapped controls during this run. */
   controlEvidenceAttached: number;
   /** Packages stored from the inventory snapshot (0 when none was sent). */
@@ -836,8 +846,21 @@ export async function recordAgentRun(
     let findingsCreated = 0;
     let findingsRefreshed = 0;
     let findingsSuppressed = 0;
+    let findingsSkippedForQuota = 0;
     let controlEvidenceAttached = 0;
     const now = new Date();
+
+    // The tenant's finding quota bounds this run, but softly: the host facts the
+    // agent just reported are worth keeping even when the budget is gone, so the
+    // run still succeeds and only the new finding rows are skipped. Refreshing an
+    // existing finding is always allowed — it creates no row. The check takes the
+    // quota lock inside this transaction, so two concurrent runs cannot both
+    // spend the same remaining slot.
+    let findingBudget = await remainingQuota(tx, {
+      organizationId: principal.organizationId,
+      tier: principal.organizationTier,
+      resource: 'findings',
+    });
 
     // Loaded once: a run normally has a handful of failing checks, and the map
     // table is small, but per-finding lookups would still multiply the queries.
@@ -856,6 +879,11 @@ export async function recordAgentRun(
       });
 
       if (!existing) {
+        if (findingBudget === 0) {
+          findingsSkippedForQuota += 1;
+          continue;
+        }
+
         const createdFinding = await tx.finding.create({
           data: {
             organizationId: principal.organizationId,
@@ -917,6 +945,9 @@ export async function recordAgentRun(
         });
 
         findingsCreated += 1;
+        if (findingBudget !== null) {
+          findingBudget -= 1;
+        }
         continue;
       }
 
@@ -1034,6 +1065,11 @@ export async function recordAgentRun(
           : null;
 
         if (!existingAdvisory) {
+          if (findingBudget === 0) {
+            findingsSkippedForQuota += 1;
+            continue;
+          }
+
           const createdFinding = await tx.finding.create({
             data: {
               organizationId: principal.organizationId,
@@ -1090,6 +1126,9 @@ export async function recordAgentRun(
           });
 
           findingsCreated += 1;
+          if (findingBudget !== null) {
+            findingBudget -= 1;
+          }
           continue;
         }
 
@@ -1152,6 +1191,7 @@ export async function recordAgentRun(
         findingsCreated,
         findingsRefreshed,
         findingsSuppressed,
+        findingsSkippedForQuota,
         controlEvidenceAttached,
         inventoryCount,
         advisoryMatches,
@@ -1166,6 +1206,7 @@ export async function recordAgentRun(
       findingsCreated,
       findingsRefreshed,
       findingsSuppressed,
+      findingsSkippedForQuota,
       controlEvidenceAttached,
       inventoryCount,
       advisoryMatches,
@@ -1178,6 +1219,7 @@ export async function recordAgentRun(
     findingsCreated: result.findingsCreated,
     findingsRefreshed: result.findingsRefreshed,
     findingsSuppressed: result.findingsSuppressed,
+    findingsSkippedForQuota: result.findingsSkippedForQuota,
     controlEvidenceAttached: result.controlEvidenceAttached,
     inventoryCount: result.inventoryCount,
     advisoryMatches: result.advisoryMatches,

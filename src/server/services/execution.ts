@@ -6,6 +6,7 @@ import type {
 } from '@/generated/prisma/client';
 import { prisma } from '@/lib/prisma';
 import { AuditActions, appendAuditEvent, recordAuditEvent } from '@/server/audit/audit';
+import { getMaxActiveExecutionJobs } from '@/server/config';
 import { isAtLeast, type OrgRole } from '@/server/authz/roles';
 import type { TenantContext } from '@/server/authz/context';
 import {
@@ -51,6 +52,12 @@ import { isUniqueConstraintError, paginationMeta } from './shared';
 const WORKER_HEARTBEAT_TTL_MS = 5 * 60 * 1000;
 const REVIEW_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 const QUEUE_EXPIRY_MS = 24 * 60 * 60 * 1000;
+
+/** Jobs in one of these states still hold a slot against the tenant's cap. */
+const ACTIVE_JOB_STATUSES: ExecutionJobStatus[] = ['PENDING_REVIEW', 'QUEUED', 'RUNNING'];
+
+/** Namespace for the dispatch advisory lock; distinct from the quota namespace. */
+const EXECUTION_DISPATCH_LOCK_NAMESPACE = 8_210_003;
 
 export interface ExecutionDeps {
   /** Injectable DNS resolver so tests can simulate a rebind without owning DNS. */
@@ -535,7 +542,30 @@ export async function requestExecutionJob(
   }
 
   const reviewRequired = risk === 'HIGH';
+  const maxActiveJobs = getMaxActiveExecutionJobs();
   const job = await prisma.$transaction(async (tx) => {
+    // The cap is checked under an advisory lock so two concurrent dispatches
+    // cannot both read the same free slot and push the tenant over the limit.
+    // The lock is transaction-scoped, so it is released when this job is
+    // committed (or rolls back).
+    await tx.$queryRaw`SELECT 1::int AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(${`execution-jobs:${ctx.organization.id}`}, ${EXECUTION_DISPATCH_LOCK_NAMESPACE}))) AS dispatch_lock`;
+    const activeJobs = await tx.executionJob.count({
+      where: {
+        organizationId: ctx.organization.id,
+        status: { in: ACTIVE_JOB_STATUSES },
+      },
+    });
+    if (activeJobs >= maxActiveJobs) {
+      // A booking error, not a policy denial: nothing is wrong with the target,
+      // the tenant is simply at its ceiling. No job row is written for it.
+      throw new AppError(
+        429,
+        'RATE_LIMITED',
+        `This organization already has ${activeJobs} execution jobs in flight (limit ${maxActiveJobs}). Wait for one to finish, or cancel one, before dispatching another.`,
+        { headers: { 'Retry-After': '60' } },
+      );
+    }
+
     const created = await tx.executionJob.create({
       data: {
         organizationId: ctx.organization.id,

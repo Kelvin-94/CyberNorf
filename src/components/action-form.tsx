@@ -31,7 +31,7 @@ export interface FormField {
 
 export interface ActionFormProps {
   action: string;
-  method?: 'POST' | 'PATCH';
+  method?: 'POST' | 'PATCH' | 'PUT';
   fields: FormField[];
   submitLabel: string;
   successMessage?: string;
@@ -82,6 +82,12 @@ export function ActionForm({
 
     for (const field of fields) {
       if (field.type === 'hidden') {
+        // A hidden field is part of the request, not just layout: routes such as
+        // adopting a framework take the id from the payload, so omitting it made
+        // those forms fail validation while looking correct in the browser.
+        if (field.defaultValue !== undefined) {
+          payload[field.name] = field.defaultValue;
+        }
         continue;
       }
       const raw = data.get(field.name);
@@ -98,6 +104,8 @@ export function ActionForm({
     try {
       if (method === 'PATCH') {
         await api.patch(action, payload);
+      } else if (method === 'PUT') {
+        await api.put(action, payload);
       } else {
         await api.post(action, payload);
       }

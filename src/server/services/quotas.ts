@@ -163,6 +163,52 @@ export async function getQuotaUsage(
 }
 
 /**
+ * Serialises quota checks for this tenant and resource until the transaction
+ * commits, then returns the limit that applies. The lock is transaction-scoped,
+ * so a crash or rollback releases it. Taking it here rather than at each caller
+ * keeps the lock ordering identical everywhere: lock, then count.
+ */
+async function lockAndResolveLimit(
+  tx: Tx,
+  input: { organizationId: string; tier: SubscriptionTier; resource: QuotaResource },
+): Promise<number | null> {
+  await tx.$queryRaw`SELECT 1::int AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(${`${input.organizationId}:${input.resource}`}, ${QUOTA_LOCK_NAMESPACE}))) AS quota_lock`;
+
+  const overrides = await loadOverrides(input.organizationId);
+  return resolveLimit(input.tier, input.resource, overrides[input.resource]);
+}
+
+/** Current rows in use (or megabytes stored) for one resource of one tenant. */
+async function countResourceUsage(
+  tx: Tx,
+  organizationId: string,
+  resource: QuotaResource,
+): Promise<number> {
+  switch (resource) {
+    case 'evidenceStorageMb':
+      return Math.ceil((await evidenceBytes(organizationId)) / BYTES_PER_MB);
+    case 'apiKeys':
+      return tx.userApiKey.count({ where: { organizationId, revokedAt: null } });
+    case 'assets':
+      return tx.asset.count({ where: { organizationId } });
+    case 'findings':
+      return tx.finding.count({ where: { organizationId } });
+    case 'incidents':
+      return tx.incident.count({ where: { organizationId } });
+    case 'identities':
+      return tx.identity.count({ where: { organizationId } });
+    case 'agents':
+      return tx.agent.count({ where: { organizationId } });
+    case 'indicators':
+      return tx.indicator.count({ where: { organizationId } });
+    default: {
+      const exhaustive: never = resource;
+      throw new Error(`Unhandled quota resource: ${String(exhaustive)}`);
+    }
+  }
+}
+
+/**
  * Asserts that one more of `resource` fits, after taking the lock that makes the
  * check safe. Must be called inside the transaction that performs the insert.
  *
@@ -183,53 +229,35 @@ export async function assertQuotaAvailable(
     return;
   }
 
-  // Serialise quota checks for this tenant and resource until the transaction
-  // commits. The lock is transaction-scoped, so a crash or rollback releases it.
-  await tx.$queryRaw`SELECT 1::int AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(${`${input.organizationId}:${input.resource}`}, ${QUOTA_LOCK_NAMESPACE}))) AS quota_lock`;
-
-  const overrides = await loadOverrides(input.organizationId);
-  const limit = resolveLimit(input.tier, input.resource, overrides[input.resource]);
+  const limit = await lockAndResolveLimit(tx, input);
   if (limit === null) {
     return;
   }
 
-  let used: number;
-  switch (input.resource) {
-    case 'evidenceStorageMb':
-      used = Math.ceil((await evidenceBytes(input.organizationId)) / BYTES_PER_MB);
-      break;
-    case 'apiKeys':
-      used = await tx.userApiKey.count({
-        where: { organizationId: input.organizationId, revokedAt: null },
-      });
-      break;
-    case 'assets':
-      used = await tx.asset.count({ where: { organizationId: input.organizationId } });
-      break;
-    case 'findings':
-      used = await tx.finding.count({ where: { organizationId: input.organizationId } });
-      break;
-    case 'incidents':
-      used = await tx.incident.count({ where: { organizationId: input.organizationId } });
-      break;
-    case 'identities':
-      used = await tx.identity.count({ where: { organizationId: input.organizationId } });
-      break;
-    case 'agents':
-      used = await tx.agent.count({ where: { organizationId: input.organizationId } });
-      break;
-    case 'indicators':
-      used = await tx.indicator.count({ where: { organizationId: input.organizationId } });
-      break;
-    default: {
-      const exhaustive: never = input.resource;
-      throw new Error(`Unhandled quota resource: ${String(exhaustive)}`);
-    }
-  }
-
+  const used = await countResourceUsage(tx, input.organizationId, input.resource);
   if (used + units > limit) {
     throw new QuotaExceededError(input.resource, limit, used);
   }
+}
+
+/**
+ * Capacity left before the limit, or `null` when the resource is unlimited.
+ *
+ * This is the same locked check as `assertQuotaAvailable` without the throw, for
+ * writers that must keep going when the budget is exhausted instead of failing
+ * the whole request — an agent run that already recorded its host facts should
+ * not be rolled back because the tenant is at its finding limit.
+ */
+export async function remainingQuota(
+  tx: Tx,
+  input: { organizationId: string; tier: SubscriptionTier; resource: QuotaResource },
+): Promise<number | null> {
+  const limit = await lockAndResolveLimit(tx, input);
+  if (limit === null) {
+    return null;
+  }
+  const used = await countResourceUsage(tx, input.organizationId, input.resource);
+  return Math.max(0, limit - used);
 }
 
 /**

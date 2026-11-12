@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { createReadStream, createWriteStream, readFileSync } from 'node:fs';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Client } from 'pg';
 import { PrismaClient } from '@/generated/prisma/client';
@@ -321,6 +321,30 @@ function describeDiff(missing: string[], extra: string[], limit = 5): string {
   return parts.join('; ');
 }
 
+/**
+ * PostgreSQL deparses a CHECK predicate from its parse tree, so a dump and
+ * restore can produce a logically identical definition with different
+ * grouping: `((a AND b) AND c)` comes back as `(a AND b AND c)`. For a
+ * conjunction of comparisons, parentheses carry no meaning, so the drill
+ * compares the sorted conjuncts instead of the text. Anything containing OR,
+ * NOT, BETWEEN or a subquery keeps its exact definition, because there the
+ * grouping does change the result.
+ */
+function normaliseConstraintDef(kind: string, def: string): string {
+  const compact = def.replace(/\s+/g, ' ').trim();
+  if (kind !== 'c' || /\b(OR|NOT|BETWEEN)\b/i.test(compact) || compact.includes('SELECT')) {
+    return compact;
+  }
+  return compact
+    .replace(/^CHECK\s*/, '')
+    .replace(/[()]/g, ' ')
+    .split(/\s+AND\s+/i)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .sort()
+    .join(' AND ');
+}
+
 async function introspect(
   client: Client,
   schema: string,
@@ -342,9 +366,14 @@ async function introspect(
        FROM information_schema.columns WHERE table_schema = $1 ORDER BY 1`,
     [schema],
   );
-  const constraints = await client.query<{ sig: string }>(
-    `SELECT cls.relname || ' ' || con.conname || ' ' || con.contype::text || ' ' ||
-            pg_get_constraintdef(con.oid) AS sig
+  const constraints = await client.query<{
+    table_name: string;
+    name: string;
+    kind: string;
+    def: string;
+  }>(
+    `SELECT cls.relname AS table_name, con.conname AS name, con.contype::text AS kind,
+            pg_get_constraintdef(con.oid) AS def
        FROM pg_constraint con
        JOIN pg_class cls ON cls.oid = con.conrelid
        JOIN pg_namespace ns ON ns.oid = cls.relnamespace
@@ -378,7 +407,10 @@ async function introspect(
   return {
     tables: tables.rows.map((row) => row.table_name),
     columns: columns.rows.map((row) => row.sig),
-    constraints: constraints.rows.map((row) => row.sig),
+    constraints: constraints.rows.map(
+      (row) =>
+        `${row.table_name} ${row.name} ${row.kind} ${normaliseConstraintDef(row.kind, row.def)}`,
+    ),
     triggers: triggers.rows.map((row) => row.sig),
     migrations,
   };
@@ -728,6 +760,7 @@ async function main(): Promise<void> {
       checks,
       warnings,
     };
+    await mkdir(dirname(reportPath), { recursive: true });
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
     console.log(`  report written to ${reportPath}`);
   }

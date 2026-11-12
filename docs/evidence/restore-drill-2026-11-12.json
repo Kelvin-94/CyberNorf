@@ -1,0 +1,97 @@
+{
+  "drill": {
+    "verdict": "PASS",
+    "startedAt": "2026-11-12T09:27:28.823Z",
+    "finishedAt": "2026-11-12T09:27:31.538Z",
+    "durationSeconds": 2.71
+  },
+  "source": {
+    "host": "localhost",
+    "port": 55432,
+    "database": "cybernorf",
+    "schema": "public",
+    "user": "cybernorf"
+  },
+  "drillDatabase": {
+    "name": "cybernorf_drill_20261112092728",
+    "retained": false
+  },
+  "checks": [
+    {
+      "name": "source database reachable",
+      "status": "pass",
+      "detail": "connected as cybernorf"
+    },
+    {
+      "name": "source snapshot captured",
+      "status": "pass",
+      "detail": "45 tables, 16 migrations"
+    },
+    {
+      "name": "drill database created",
+      "status": "pass",
+      "detail": "cybernorf_drill_20261112092728"
+    },
+    {
+      "name": "dump created",
+      "status": "pass",
+      "detail": "326.6 KiB custom-format archive"
+    },
+    {
+      "name": "restore completed",
+      "status": "pass",
+      "detail": "pg_restore --exit-on-error"
+    },
+    {
+      "name": "table set matches",
+      "status": "pass",
+      "detail": "45 tables"
+    },
+    {
+      "name": "column definitions match",
+      "status": "pass",
+      "detail": "500 columns"
+    },
+    {
+      "name": "constraints match",
+      "status": "pass",
+      "detail": "177 constraints"
+    },
+    {
+      "name": "triggers match",
+      "status": "pass",
+      "detail": "3 triggers"
+    },
+    {
+      "name": "migration history matches",
+      "status": "pass",
+      "detail": "16 migrations applied"
+    },
+    {
+      "name": "row counts match",
+      "status": "pass",
+      "detail": "45 tables compared"
+    },
+    {
+      "name": "append-only trigger rejects UPDATE on audit_events",
+      "status": "pass",
+      "detail": "statement raised, rolled back"
+    },
+    {
+      "name": "append-only trigger rejects UPDATE on auth_events",
+      "status": "pass",
+      "detail": "statement raised, rolled back"
+    },
+    {
+      "name": "append-only trigger rejects UPDATE on identity_events",
+      "status": "skip",
+      "detail": "table is empty"
+    },
+    {
+      "name": "audit chain verifies",
+      "status": "pass",
+      "detail": "46 organization(s), 625 events recomputed"
+    }
+  ],
+  "warnings": []
+}
