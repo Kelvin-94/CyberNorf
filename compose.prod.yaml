@@ -95,6 +95,9 @@ services:
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
       OIDC_DISPLAY_NAME: ${OIDC_DISPLAY_NAME:-}
       OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      # Public keys, not secrets: the release channel trusts only signatures made
+      # by one of these. Empty disables publishing.
+      ZERO_TRUST_PUBLISHER_KEYS: ${ZERO_TRUST_PUBLISHER_KEYS:-}
     depends_on:
       database:
         condition: service_healthy

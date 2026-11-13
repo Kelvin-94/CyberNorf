@@ -1,4 +1,5 @@
 import { ZodError } from 'zod';
+import { ZeroTrustError } from '@/server/domain/zero-trust';
 import { logger } from '@/server/logging/logger';
 
 export type ErrorCode =
@@ -101,6 +102,24 @@ export function toErrorResponse(error: unknown, requestId: string): Response {
 
   if (error instanceof ZodError) {
     return toErrorResponse(validationFailed(error), requestId);
+  }
+
+  // Domain rules throw their own error type. Services map the cases they can
+  // explain, but a missed mapping must not surface as a 500: the code is
+  // returned as a detail so the caller can tell which rule refused.
+  if (error instanceof ZeroTrustError) {
+    const isConflict = error.code === 'invalid_transition' || error.code === 'self_approval';
+    return toErrorResponse(
+      new AppError(
+        isConflict ? 409 : 422,
+        isConflict ? 'CONFLICT' : 'VALIDATION_FAILED',
+        error.message,
+        {
+          details: [{ path: '(root)', message: error.code }],
+        },
+      ),
+      requestId,
+    );
   }
 
   // Unexpected failures are logged server-side without request payloads. The

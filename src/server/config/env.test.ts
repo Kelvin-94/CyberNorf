@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import { formatEnvReport, validateEnvironment } from './env.ts';
 
@@ -266,4 +267,81 @@ test('no message ever contains a configured value', () => {
   for (const value of [secret, cron, 'client-secret-value', 'client-id-value']) {
     assert.ok(!rendered.includes(value), `the report leaked ${value}`);
   }
+});
+
+/**
+ * Publisher keys are the only thing standing between a tampered build and a
+ * device, so a malformed entry is a startup error. The parser silently skips an
+ * entry it cannot read; if validation let that through, the first sign of the
+ * problem would be a refused publish during an incident.
+ */
+function ed25519Spki(): string {
+  const { publicKey } = generateKeyPairSync('ed25519');
+  return publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+}
+
+test('a valid Ed25519 publisher key is accepted', () => {
+  const report = validateEnvironment(
+    productionEnv({ ZERO_TRUST_PUBLISHER_KEYS: `release-2026:${ed25519Spki()}` }),
+    { production: true },
+  );
+
+  assert.equal(report.ok, true);
+  assert.deepEqual(report.errors, []);
+  assert.ok(report.accepted.includes('ZERO_TRUST_PUBLISHER_KEYS'));
+});
+
+test('publisher keys are optional: an unset value is not a fault', () => {
+  const report = validateEnvironment(productionEnv(), { production: true });
+
+  assert.equal(report.ok, true);
+  assert.ok(!variables(report).includes('ZERO_TRUST_PUBLISHER_KEYS'));
+});
+
+test('a publisher entry with no key id is refused', () => {
+  const report = validateEnvironment(productionEnv({ ZERO_TRUST_PUBLISHER_KEYS: ed25519Spki() }), {
+    production: true,
+  });
+
+  assert.equal(report.ok, false);
+  const issue = report.errors.find((entry) => entry.variable === 'ZERO_TRUST_PUBLISHER_KEYS');
+  assert.match(issue?.message ?? '', /comma-separated list/);
+});
+
+test('a non-Ed25519 publisher key is refused, because verification would never accept it', () => {
+  const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const rsa = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+
+  const report = validateEnvironment(
+    productionEnv({ ZERO_TRUST_PUBLISHER_KEYS: `rsa-key:${rsa}` }),
+    { production: true },
+  );
+
+  assert.equal(report.ok, false);
+  const issue = report.errors.find((entry) => entry.variable === 'ZERO_TRUST_PUBLISHER_KEYS');
+  assert.match(issue?.message ?? '', /not an Ed25519 public key/);
+  assert.match(issue?.message ?? '', /rsa-key/);
+});
+
+test('a repeated publisher key id is refused instead of silently keeping the last one', () => {
+  const key = ed25519Spki();
+  const report = validateEnvironment(
+    productionEnv({ ZERO_TRUST_PUBLISHER_KEYS: `release:${key},release:${key}` }),
+    { production: true },
+  );
+
+  assert.equal(report.ok, false);
+  const issue = report.errors.find((entry) => entry.variable === 'ZERO_TRUST_PUBLISHER_KEYS');
+  assert.match(issue?.message ?? '', /unique key ids/);
+});
+
+test('a wrong-type key does not leak its material into the report', () => {
+  const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const rsa = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+  const report = validateEnvironment(
+    productionEnv({ ZERO_TRUST_PUBLISHER_KEYS: `rsa-key:${rsa}` }),
+    { production: true },
+  );
+
+  assert.ok(!formatEnvReport(report).includes(rsa.slice(0, 32)));
 });
