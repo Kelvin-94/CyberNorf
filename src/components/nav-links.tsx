@@ -6,12 +6,12 @@ import { usePathname } from 'next/navigation';
 export interface NavItem {
   href: string;
   label: string;
-  group: 'Investigate' | 'Govern';
+  group: 'Investigate' | 'Control' | 'Govern';
 }
 
 export function NavLinks({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
-  const groups: Array<NavItem['group']> = ['Investigate', 'Govern'];
+  const groups: Array<NavItem['group']> = ['Investigate', 'Control', 'Govern'];
   // Several entries can be prefixes of the current path (Settings and
   // Settings → Retention). Only the deepest match is the page being viewed.
   const activeHref = items

@@ -68,6 +68,19 @@ export const CAPABILITIES = [
   'retention.read',
   'retention.manage',
   'retention.purge',
+  // Zero Trust control plane. Reads are available to every role because seeing
+  // why a request was allowed or denied is part of using the product; writes
+  // change who is admitted to the estate, so they are administrator actions.
+  'policy.read',
+  'policy.manage',
+  'device.read',
+  'device.manage',
+  'network.read',
+  'network.manage',
+  'enforcement.read',
+  'enforcement.manage',
+  'update.read',
+  'update.manage',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -106,6 +119,11 @@ export const MUTATING_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability
   'execution.worker_manage',
   'retention.manage',
   'retention.purge',
+  'policy.manage',
+  'device.manage',
+  'network.manage',
+  'enforcement.manage',
+  'update.manage',
 ]);
 
 const READ_ONLY_CAPABILITIES: readonly Capability[] = [
@@ -124,6 +142,11 @@ const READ_ONLY_CAPABILITIES: readonly Capability[] = [
   'engagement.read',
   'execution.read',
   'retention.read',
+  'policy.read',
+  'device.read',
+  'network.read',
+  'enforcement.read',
+  'update.read',
 ];
 
 const ANALYST_CAPABILITIES: readonly Capability[] = [
@@ -184,6 +207,15 @@ const ADMIN_CAPABILITIES: readonly Capability[] = [
   'execution.review',
   'execution.worker_manage',
   'retention.manage',
+  // Policy decides admission, devices report the trust facts policy consumes,
+  // connectors and segments describe the network those decisions apply to, and
+  // enforcement is the command channel to that network. Analysts can read all
+  // of it while investigating; changing any of it is administrative.
+  'policy.manage',
+  'device.manage',
+  'network.manage',
+  'enforcement.manage',
+  'update.manage',
 ];
 
 /**

@@ -56,6 +56,17 @@ export function hasEvidenceSigningKey(): boolean {
   return (process.env.EVIDENCE_SIGNING_KEY?.trim() ?? '').length >= 32;
 }
 
+/**
+ * Publisher keys accepted for signed software releases, as comma-separated
+ * `keyId:base64(spki)` pairs. They are held in the environment rather than the
+ * database so a database compromise cannot mint a release the platform would
+ * accept, and so rotating a publisher key does not require a migration.
+ */
+export function getPublisherKeyMaterial(): string | undefined {
+  const value = process.env.ZERO_TRUST_PUBLISHER_KEYS?.trim();
+  return value && value.length > 0 ? value : undefined;
+}
+
 export function isProduction(): boolean {
   return process.env.NODE_ENV === 'production';
 }

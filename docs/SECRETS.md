@@ -12,6 +12,7 @@ pinned by tests, because guessing them is how a rotation becomes an incident.
 - [Rotating the database password](#rotating-the-database-password)
 - [Rotating the identity-provider secret](#rotating-the-identity-provider-secret)
 - [Rotating the package signing key](#rotating-the-package-signing-key)
+- [Release publisher keys](#release-publisher-keys)
 - [Credentials issued inside the app](#credentials-issued-inside-the-app)
 - [Mounted secret files](#mounted-secret-files)
 - [Configuration fingerprint](#configuration-fingerprint)
@@ -35,21 +36,22 @@ they describe intent rather than a broken deployment.
 
 The rules it enforces:
 
-| Variable                        | Rule                                                                                                | Severity        |
-| ------------------------------- | --------------------------------------------------------------------------------------------------- | --------------- |
-| `DATABASE_URL`                  | required, `postgresql://`, must name host and database                                              | error           |
-| `BETTER_AUTH_URL`               | required, absolute, `https://` in production outside loopback                                       | error           |
-| `BETTER_AUTH_SECRET`            | required in production, at least 32 characters                                                      | error           |
-| `CRON_SECRET`                   | at least 24 characters if set; unset disables the sweep                                             | error / warning |
-| `AGENT_REQUIRE_SIGNED_RUNS`     | exactly `true` or `false` if set                                                                    | error           |
-| `NOTIFY_ALLOW_PRIVATE_WEBHOOKS` | exactly `true` or `false` if set; `true` in production warns                                        | error / warning |
-| `OIDC_*`                        | all three of `OIDC_ISSUER`/`CLIENT_ID`/`CLIENT_SECRET`, or none; issuer `https://` outside loopback | error           |
-| `SECRETS_DIR`                   | absolute path if set; each entry is validated when it is read                                       | error           |
-| `EVIDENCE_DIR`                  | absolute path if set; unset means file evidence is unavailable, not broken                          | error           |
-| `EVIDENCE_SIGNING_KEY`          | at least 32 characters if set; unset disables signed packages, and the route answers 503            | error           |
-| `EVIDENCE_SIGNING_KEY_ID`       | 1–64 letters, digits, dot, dash or underscore if set; recorded in every manifest                    | error           |
-| `NODE_ENV`                      | `development`, `test` or `production`; unset warns                                                  | warning         |
-| `LOG_LEVEL`                     | `debug`, `info`, `warn` or `error`; unknown warns and falls back to `info`                          | warning         |
+| Variable                        | Rule                                                                                                    | Severity        |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------- |
+| `DATABASE_URL`                  | required, `postgresql://`, must name host and database                                                  | error           |
+| `BETTER_AUTH_URL`               | required, absolute, `https://` in production outside loopback                                           | error           |
+| `BETTER_AUTH_SECRET`            | required in production, at least 32 characters                                                          | error           |
+| `CRON_SECRET`                   | at least 24 characters if set; unset disables the sweep                                                 | error / warning |
+| `AGENT_REQUIRE_SIGNED_RUNS`     | exactly `true` or `false` if set                                                                        | error           |
+| `NOTIFY_ALLOW_PRIVATE_WEBHOOKS` | exactly `true` or `false` if set; `true` in production warns                                            | error / warning |
+| `OIDC_*`                        | all three of `OIDC_ISSUER`/`CLIENT_ID`/`CLIENT_SECRET`, or none; issuer `https://` outside loopback     | error           |
+| `SECRETS_DIR`                   | absolute path if set; each entry is validated when it is read                                           | error           |
+| `EVIDENCE_DIR`                  | absolute path if set; unset means file evidence is unavailable, not broken                              | error           |
+| `EVIDENCE_SIGNING_KEY`          | at least 32 characters if set; unset disables signed packages, and the route answers 503                | error           |
+| `EVIDENCE_SIGNING_KEY_ID`       | 1–64 letters, digits, dot, dash or underscore if set; recorded in every manifest                        | error           |
+| `ZERO_TRUST_PUBLISHER_KEYS`     | comma-separated `keyId:base64`/`keyId:PEM` entries, ed25519 only, unique ids; unset disables publishing | error           |
+| `NODE_ENV`                      | `development`, `test` or `production`; unset warns                                                      | warning         |
+| `LOG_LEVEL`                     | `debug`, `info`, `warn` or `error`; unknown warns and falls back to `info`                              | warning         |
 
 The boolean rules matter more than they look. The application compares these
 variables to the literal string `'true'`, so `AGENT_REQUIRE_SIGNED_RUNS=1`
@@ -180,6 +182,37 @@ check packages, and keep it with the archives when the key is retired.
    environment, so verifying an old package means running it with the old pair.
 4. Nothing is re-signed in place. A package already distributed stays valid under
    its own key id; re-issue it when the recipient needs it under the new key.
+
+## Release publisher keys
+
+`ZERO_TRUST_PUBLISHER_KEYS` is the trust anchor of the Zero Trust software-update
+channel, and it is the one entry in this document that is **not** a secret. It
+holds ed25519 public keys, so it is safe in a deployment manifest, a ticket or a
+reviewed change. Keep it in the environment rather than the database on purpose:
+a release is stored only after its manifest signature verifies under one of these
+keys (`src/server/domain/zero-trust.ts`), so an attacker who can write rows still
+cannot mint a release a connector would install.
+
+Format: one or more `keyId:material` entries separated by commas, where the
+material is base64 of the DER SubjectPublicKeyInfo or a PEM public key. The key id
+is recorded on every release and returned to connectors, so ids must be unique
+within the list; a non-ed25519 key is refused at startup because verification
+would never accept it.
+
+Unset is a valid state. The updates page reports zero configured publisher keys
+and publishing is refused with `400`, but releases already stored keep their
+records and simply resolve to `publisher_key_unknown` during device checks.
+
+### Rotating a release publisher key
+
+1. Generate the next key pair offline: `openssl genpkey -algorithm ED25519 -out publisher-2027.pem`.
+2. Publish its public half under a new id, next to the current one, and restart:
+   `ZERO_TRUST_PUBLISHER_KEYS=2026-11:<old>,2027-01:<new>`.
+3. Sign new releases with the new key. Devices accept both ids during the
+   overlap, so an update already in flight does not fail.
+4. Once no offered or rollback-target release carries the old id, drop the old
+   entry and restart. Keep the retired public key with the release archive; a
+   device check for an old release reports `publisher_key_unknown` afterwards.
 
 ## Credentials issued inside the app
 

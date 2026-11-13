@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { assertSecureDatabase, assertSecureOrigin, isLoopbackHost } from '@/server/config';
+import { loadPublisherPublicKey, parsePublisherKeys } from '@/server/domain/zero-trust';
 
 /**
  * Startup validation for every environment variable the application reads.
@@ -392,6 +393,41 @@ export function validateEnvironment(
       });
     } else {
       accepted.push('EVIDENCE_SIGNING_KEY_ID');
+    }
+  }
+
+  // --- publisher keys for signed releases ----------------------------------
+  // Release manifests are verified against Ed25519 public keys held here rather
+  // than in the database, so a database compromise cannot mint a release the
+  // platform would accept. A malformed entry is an error rather than a warning:
+  // the parser would skip it, and every publish signed with that key id would
+  // fail later, at the moment an operator is trying to ship a fix.
+  const publisherKeys = read(env, 'ZERO_TRUST_PUBLISHER_KEYS');
+  if (publisherKeys.length > 0) {
+    const entries = publisherKeys
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== '');
+    const parsed = parsePublisherKeys(publisherKeys);
+    const offenders = [...parsed].filter(([, material]) => {
+      const key = loadPublisherPublicKey(material);
+      return key === null || key.asymmetricKeyType !== 'ed25519';
+    });
+    if (parsed.size !== entries.length) {
+      errors.push({
+        variable: 'ZERO_TRUST_PUBLISHER_KEYS',
+        message:
+          'must be a comma-separated list of keyId:key entries with unique key ids; an entry has no key id, no key material, or repeats an earlier id.',
+        severity: 'error',
+      });
+    } else if (offenders.length > 0) {
+      errors.push({
+        variable: 'ZERO_TRUST_PUBLISHER_KEYS',
+        message: `key "${offenders[0]?.[0] ?? ''}" is not an Ed25519 public key; releases are verified with Ed25519 only, so this key would never accept a manifest.`,
+        severity: 'error',
+      });
+    } else {
+      accepted.push('ZERO_TRUST_PUBLISHER_KEYS');
     }
   }
 

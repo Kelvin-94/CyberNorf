@@ -35,15 +35,23 @@ The app sends its own security headers (CSP, HSTS, `X-Frame-Options`, `X-Content
    chmod 600 .env.production
    ```
 
-   | Variable             | Notes                                                                                                         |
-   | -------------------- | ------------------------------------------------------------------------------------------------------------- |
-   | `CYBERNORF_DOMAIN`   | Public hostname. Must match the DNS record.                                                                   |
-   | `ACME_EMAIL`         | Contact address the certificate authority uses for expiry notices.                                            |
-   | `BETTER_AUTH_URL`    | `https://` plus the same hostname. The app compares it to the request origin on every state-changing request. |
-   | `BETTER_AUTH_SECRET` | `openssl rand -base64 48`. At least 32 characters.                                                            |
-   | `CRON_SECRET`        | `openssl rand -base64 32`. Empty disables the alert sweep.                                                    |
-   | `POSTGRES_PASSWORD`  | Used when the volume is created.                                                                              |
-   | `DATABASE_URL`       | Must repeat that password and keep `sslmode=verify-full&sslrootcert=/etc/cybernorf/database-tls/server.crt`.  |
+   | Variable                    | Notes                                                                                                         |
+   | --------------------------- | ------------------------------------------------------------------------------------------------------------- |
+   | `CYBERNORF_DOMAIN`          | Public hostname. Must match the DNS record.                                                                   |
+   | `ACME_EMAIL`                | Contact address the certificate authority uses for expiry notices.                                            |
+   | `BETTER_AUTH_URL`           | `https://` plus the same hostname. The app compares it to the request origin on every state-changing request. |
+   | `BETTER_AUTH_SECRET`        | `openssl rand -base64 48`. At least 32 characters.                                                            |
+   | `CRON_SECRET`               | `openssl rand -base64 32`. Empty disables the alert sweep.                                                    |
+   | `POSTGRES_PASSWORD`         | Used when the volume is created.                                                                              |
+   | `DATABASE_URL`              | Must repeat that password and keep `sslmode=verify-full&sslrootcert=/etc/cybernorf/database-tls/server.crt`.  |
+   | `ZERO_TRUST_PUBLISHER_KEYS` | Optional. ed25519 public keys (`keyId:base64`), comma-separated. Unset disables releasing software.           |
+
+   The last row is the only optional one, and it is not a secret. It is what
+   makes the Zero Trust update channel trustworthy: a release is stored only
+   after its signature verifies under one of these keys, so a stolen database
+   cannot produce an update that devices install. Generate a pair with
+   `openssl genpkey -algorithm ED25519 -out publisher.pem` and add the public half.
+   Rotation is a two-step overlap; see `docs/SECRETS.md`.
 
 2. Check the configuration before starting anything. This loads the same file the
    stack will use, reports every problem at once, names variables but never

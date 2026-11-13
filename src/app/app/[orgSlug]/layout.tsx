@@ -21,6 +21,16 @@ const NAV_ITEMS: Array<{
   { href: '/findings', label: 'Findings', group: 'Investigate', capability: 'finding.read' },
   { href: '/advisories', label: 'Advisories', group: 'Investigate', capability: 'advisory.read' },
   { href: '/incidents', label: 'Incidents', group: 'Investigate', capability: 'incident.read' },
+  { href: '/devices', label: 'Devices', group: 'Control', capability: 'device.read' },
+  { href: '/policies', label: 'Policies', group: 'Control', capability: 'policy.read' },
+  { href: '/network', label: 'Network', group: 'Control', capability: 'network.read' },
+  {
+    href: '/enforcement',
+    label: 'Enforcement',
+    group: 'Control',
+    capability: 'enforcement.read',
+  },
+  { href: '/updates', label: 'Updates', group: 'Control', capability: 'update.read' },
   { href: '/agents', label: 'Agents', group: 'Govern', capability: 'agent.read' },
   { href: '/identities', label: 'Identities', group: 'Govern', capability: 'identity.read' },
   {
